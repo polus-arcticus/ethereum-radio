@@ -1,3 +1,10 @@
+# Ethereum Radio
+Tooling to index on the client side
+
+
+
+
+
 # Ethereum Smart Contract Development Template
 
 A production-ready template for developing EVM smart contracts using [Hardhat v3](https://hardhat.org/) and [hardhat-deploy v2](https://github.com/wighawag/hardhat-deploy) with the [rocketh](https://github.com/wighawag/rocketh) deployment system.

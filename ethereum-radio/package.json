@@ -1,0 +1,70 @@
+{
+	"name": "@ethereum-radio/indexer",
+	"version": "0.0.1",
+	"private": false,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./core/*": {
+			"types": "./dist/core/*.d.ts",
+			"default": "./dist/core/*.js"
+		},
+		"./adapters/*": {
+			"types": "./dist/adapters/*.d.ts",
+			"default": "./dist/adapters/*.js"
+		},
+		"./storage/*": {
+			"types": "./dist/storage/*.d.ts",
+			"default": "./dist/storage/*.js"
+		},
+		"./react": {
+			"types": "./dist/react/use-cursor.d.ts",
+			"default": "./dist/react/use-cursor.js"
+		},
+		"./src/*": "./src/*"
+	},
+	"files": [
+		"dist",
+		"src"
+	],
+	"peerDependencies": {
+		"ethers": ">=6",
+		"react": ">=18",
+		"viem": ">=2"
+	},
+	"peerDependenciesMeta": {
+		"ethers": {
+			"optional": true
+		},
+		"react": {
+			"optional": true
+		},
+		"viem": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@types/node": "^26.2.0",
+		"@types/react": "^19.2.14",
+		"earl": "^2.0.0",
+		"ethers": "^6.13.0",
+		"happy-dom": "^15.11.7",
+		"prettier": "^3.9.6",
+		"react": "^19.2.7",
+		"react-dom": "^19.2.7",
+		"typescript": "~6.0.3",
+		"viem": "^2.55.19"
+	},
+	"scripts": {
+		"compile": "tsc",
+		"compile:watch": "as-soon -w src pnpm compile",
+		"build": "pnpm compile",
+		"test": "node --experimental-strip-types --test \"test/**/*.test.ts\" \"test/**/*.test.tsx\"",
+		"typecheck": "tsc --noEmit",
+		"format": "prettier --write .",
+		"format:check": "prettier --check ."
+	}
+}

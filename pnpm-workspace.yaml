@@ -1,2 +1,7 @@
 packages:
   - "contracts"
+  - "ethereum-radio"
+  - "web"
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
