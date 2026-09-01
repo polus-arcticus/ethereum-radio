@@ -14,16 +14,19 @@ const config: Config = {
     v4: true, // Improve compatibility with the upcoming Docusaurus v4
   },
 
-  // Set the production url of your site here — placeholder until an actual
-  // hosting target (GitHub Pages, Vercel, custom domain...) is picked. If
-  // deploying to GitHub Pages as a project site, also set baseUrl to
-  // '/ethereum-radio/'.
-  url: 'https://ethereum-radio.example.com',
-  baseUrl: '/',
+  // Deploying as a GitHub Pages *project* site (org page would be
+  // polus-arcticus.github.io itself) — served at /ethereum-radio/, so
+  // baseUrl must match or every asset path 404s once live.
+  url: 'https://polus-arcticus.github.io',
+  baseUrl: '/ethereum-radio/',
 
   // GitHub pages deployment config.
   organizationName: 'polus-arcticus', // Usually your GitHub org/user name.
   projectName: 'ethereum-radio', // Usually your repo name.
+
+  // Explicit per Docusaurus's own deploy warning — avoids GitHub Pages
+  // adding a server-redirect trailing slash on direct (non-navigated) hits.
+  trailingSlash: false,
 
   onBrokenLinks: 'throw',
 
