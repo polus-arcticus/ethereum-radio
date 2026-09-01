@@ -20,6 +20,10 @@
 			"types": "./dist/storage/*.d.ts",
 			"default": "./dist/storage/*.js"
 		},
+		"./sync/*": {
+			"types": "./dist/sync/*.d.ts",
+			"default": "./dist/sync/*.js"
+		},
 		"./react": {
 			"types": "./dist/react/use-cursor.d.ts",
 			"default": "./dist/react/use-cursor.js"
@@ -31,12 +35,20 @@
 		"src"
 	],
 	"peerDependencies": {
+		"@helia/json": ">=6",
 		"ethers": ">=6",
+		"helia": ">=7",
 		"react": ">=18",
 		"viem": ">=2"
 	},
 	"peerDependenciesMeta": {
+		"@helia/json": {
+			"optional": true
+		},
 		"ethers": {
+			"optional": true
+		},
+		"helia": {
 			"optional": true
 		},
 		"react": {
@@ -47,11 +59,14 @@
 		}
 	},
 	"devDependencies": {
+		"@helia/json": "^6.0.5",
 		"@types/node": "^26.2.0",
 		"@types/react": "^19.2.14",
 		"earl": "^2.0.0",
 		"ethers": "^6.13.0",
 		"happy-dom": "^15.11.7",
+		"helia": "^7.1.10",
+		"multiformats": "^14.0.5",
 		"prettier": "^3.9.6",
 		"react": "^19.2.7",
 		"react-dom": "^19.2.7",
@@ -62,7 +77,8 @@
 		"compile": "tsc",
 		"compile:watch": "as-soon -w src pnpm compile",
 		"build": "pnpm compile",
-		"test": "node --experimental-strip-types --test \"test/**/*.test.ts\" \"test/**/*.test.tsx\"",
+		"test": "bash scripts/test-with-anvil.sh",
+		"test:only": "node --experimental-strip-types --test --test-concurrency=1 \"test/**/*.test.ts\" \"test/**/*.test.tsx\"",
 		"typecheck": "tsc --noEmit",
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."

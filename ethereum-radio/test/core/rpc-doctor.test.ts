@@ -4,14 +4,18 @@ import {
 	detectRpcCapabilities,
 	safeBlockRangeLimit,
 } from '../../src/core/rpc-doctor.ts';
-import {createMockLogsProvider} from '../fixtures/mock-logs-provider.ts';
-
-const ADDRESS = '0x0000000000000000000000000000000000000001';
+import {createViemAdapter} from '../../src/adapters/viem.ts';
+import {
+	LIMITED_RPC_URL,
+	readEventFixture,
+	createViemTestClients,
+	ensureTip,
+} from '../fixtures/chain-environment.ts';
 
 describe('safeBlockRangeLimit', () => {
 	it('applies the golden-ratio safety margin', () => {
 		// (1/PHI + 1/PHI^3) ≈ 0.8541019662496845
-		expect(safeBlockRangeLimit(100_000n)).toEqual(85410n);
+		expect(safeBlockRangeLimit(100_000n)).toEqual(85_410n);
 	});
 
 	it('floors at 1 even for a tiny detected range', () => {
@@ -19,44 +23,61 @@ describe('safeBlockRangeLimit', () => {
 	});
 });
 
-describe('detectRpcCapabilities', () => {
+// rpc-doctor's RANGE_CANDIDATES top out at 2,000,000 — far beyond what a
+// fresh local Anvil chain has actually mined. Anvil rejects an eth_getLogs
+// toBlock beyond its real height outright (BlockOutOfRangeError), so instead
+// of faking a tall chain, these tests fast-forward the real one with
+// chain-environment's ensureTip/anvil_mine (a real cheatcode, not a
+// log/provider mock) to a comfortable height before probing —
+// order-independent of whatever earlier test files already mined.
+describe('detectRpcCapabilities (real Anvil, via rpc-limiter)', () => {
 	it('steps down through range candidates until one succeeds', async () => {
-		// A candidate range R queries an inclusive window of R+1 blocks
-		// (fromBlock = toBlock - R), so allow exactly one more than 50_000n to
-		// let that candidate (and not the next one down) be the first to pass.
-		const provider = createMockLogsProvider({
-			logs: [],
-			tip: 1_000_000n,
-			maxRangePerCall: 50_001n,
-		});
-		const results = await detectRpcCapabilities(provider, ADDRESS, 1_000_000n);
+		const tip = await ensureTip(300n);
+		const {publicClient} = createViemTestClients(LIMITED_RPC_URL);
+		const provider = createViemAdapter(publicClient);
+
+		const results = await detectRpcCapabilities(
+			provider,
+			readEventFixture().address,
+			tip,
+		);
+
 		expect(results.getLogs).toEqual('pass');
-		expect(results.maxBlockRange).toEqual(50_000n);
+		// rpc-limiter's MAX_LOG_RANGE (docker-compose.test.yml) is pinned to 10,
+		// which is itself one of RANGE_CANDIDATES — the step-down should land
+		// exactly there.
+		expect(results.maxBlockRange).toEqual(10n);
 	});
 
 	it('reports getLogs failure and stops without stepping through ranges', async () => {
-		const provider = createMockLogsProvider({
-			logs: [],
-			tip: 1_000_000n,
-			maxRangePerCall: 0n,
-		});
-		const results = await detectRpcCapabilities(provider, ADDRESS, 1_000_000n);
+		// An unreachable RPC — a real connection failure, not a simulated one.
+		const {publicClient} = createViemTestClients('http://127.0.0.1:8599');
+		const provider = createViemAdapter(publicClient);
+
+		const results = await detectRpcCapabilities(
+			provider,
+			readEventFixture().address,
+			1_000n,
+		);
 		expect(results.getLogs).toEqual('fail');
 		expect(results.maxBlockRange).toEqual(null);
 	});
 
 	it('emits progress via onUpdate as each attempt resolves', async () => {
-		const provider = createMockLogsProvider({
-			logs: [],
-			tip: 1_000_000n,
-			maxRangePerCall: 500_001n,
-		});
+		const tip = await ensureTip(300n);
+		const {publicClient} = createViemTestClients(LIMITED_RPC_URL);
+		const provider = createViemAdapter(publicClient);
+
 		const updates: Array<{getLogs: string; maxBlockRange: bigint | null}> = [];
-		await detectRpcCapabilities(provider, ADDRESS, 1_000_000n, (r) =>
-			updates.push({getLogs: r.getLogs, maxBlockRange: r.maxBlockRange}),
+		await detectRpcCapabilities(
+			provider,
+			readEventFixture().address,
+			tip,
+			(r) => updates.push({getLogs: r.getLogs, maxBlockRange: r.maxBlockRange}),
 		);
+
 		expect(updates.some((u) => u.getLogs === 'running')).toEqual(true);
 		expect(updates.some((u) => u.getLogs === 'pass')).toEqual(true);
-		expect(updates[updates.length - 1]?.maxBlockRange).toEqual(500_000n);
+		expect(updates[updates.length - 1]?.maxBlockRange).toEqual(10n);
 	});
 });

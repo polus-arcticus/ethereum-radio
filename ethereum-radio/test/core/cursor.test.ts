@@ -1,125 +1,141 @@
-import {describe, it} from 'node:test';
+import {before, describe, it} from 'node:test';
 import {expect} from 'earl';
 import {createCursor} from '../../src/core/cursor.ts';
 import {createMemoryStore} from '../../src/storage/memory.ts';
-import {createMockLogsProvider} from '../fixtures/mock-logs-provider.ts';
-import type {RawLog} from '../../src/adapters/types.ts';
+import {createViemAdapter} from '../../src/adapters/viem.ts';
+import {
+	EMPTY_ADDRESS,
+	createViemTestClients,
+	ensureTip,
+	getTip,
+	mineBlocks,
+	readEventFixture,
+	logValue,
+} from '../fixtures/chain-environment.ts';
 
-const ADDRESS = '0x0000000000000000000000000000000000000001';
-const FLOOR = 1_000n;
 const RANGE = 100n;
 
-const makeLog = (blockNumber: bigint): RawLog => ({
-	address: ADDRESS,
-	topics: ['0xtopic'],
-	data: '0x',
-	blockNumber,
-	transactionHash: `0xtx${blockNumber}`,
-	logIndex: 0,
-	blockHash: `0xblock${blockNumber}`,
-	transactionIndex: 0,
-});
+// Cursor's span math doesn't depend on real log content for most of these
+// cases (mirroring the original mock-based tests, which mostly used
+// `logs: []`) — only that getBlockNumber()/getLogs() are real round trips
+// against the real chain. EMPTY_ADDRESS has no code and no logs ever
+// emitted against it, so it's real getLogs calls that always legitimately
+// return []. Every test reads the real current tip fresh and computes
+// floorBlock/atBlock as offsets from it, rather than a hardcoded literal —
+// that's what keeps tests independent on one shared, never-reset chain.
+const realProvider = () =>
+	createViemAdapter(createViemTestClients().publicClient);
+
+// Tests below subtract up to 400 from the real tip to compute floorBlock —
+// on a truly fresh chain (docker-compose just started) that goes negative.
+// Mine ahead once so every test in this file has room, regardless of order.
+before(() => ensureTip(500n));
 
 describe('createCursor: sync', () => {
 	it('seeds a shallow initial window when nothing has been scanned yet', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_350n});
-		const store = createMemoryStore();
+		const tip = await getTip();
+		const floor = tip - 300n;
 		const cursor = createCursor({
-			provider,
-			store,
+			provider: realProvider(),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		});
 
 		await cursor.sync();
 
+		// sync()'s no-live-span seed uses clampFromBlock(tip - blockRangeLimit,
+		// floor) — no "+1" — so the window is blockRangeLimit+1 (101) wide,
+		// unlike fetchHistory's exactly-blockRangeLimit-wide windows below.
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: 1_250n, toBlock: 1_350n},
+			{fromBlock: tip - 100n, toBlock: tip},
 		]);
 	});
 
 	it('extends from the live span end to the tip on a subsequent call', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_350n});
+		const tip = await getTip();
+		const floor = tip - 300n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: 1_250n, toBlock: 1_350n}]);
+		await store.save('k', [{fromBlock: tip - 100n, toBlock: tip}]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		});
 
-		provider.setTip(1_400n);
+		const newTip = await mineBlocks(50n);
 		await cursor.sync();
 
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: 1_250n, toBlock: 1_400n},
+			{fromBlock: tip - 100n, toBlock: newTip},
 		]);
 	});
 });
 
 describe('createCursor: fetchHistory', () => {
 	it('extends the earliest span one blockRangeLimit window further back', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
+		const tip = await getTip();
+		const floor = tip - 400n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: 1_300n, toBlock: 1_400n}]);
+		await store.save('k', [{fromBlock: tip - 199n, toBlock: tip - 99n}]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		});
 
 		await cursor.fetchHistory();
 
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: 1_200n, toBlock: 1_400n},
+			{fromBlock: tip - 299n, toBlock: tip - 99n},
 		]);
 	});
 
 	it('clamps the backward window at floorBlock and stops once the floor is reached', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
+		const tip = await getTip();
+		const floor = tip - 250n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: 1_050n, toBlock: 1_400n}]);
+		await store.save('k', [{fromBlock: floor + 50n, toBlock: tip - 99n}]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		});
 
 		await cursor.fetchHistory();
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: FLOOR, toBlock: 1_400n},
+			{fromBlock: floor, toBlock: tip - 99n},
 		]);
 
 		// A further call has nothing left to backfill (toBlock would be <= floorBlock) and is a no-op.
 		const result = await cursor.fetchHistory();
 		expect(result).toEqual([]);
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: FLOOR, toBlock: 1_400n},
+			{fromBlock: floor, toBlock: tip - 99n},
 		]);
 	});
 });
 
 describe('createCursor: fetchForward', () => {
 	it('is a no-op when no atBlock anchor is configured', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
-		const store = createMemoryStore();
+		const tip = await getTip();
 		const cursor = createCursor({
-			provider,
-			store,
+			provider: realProvider(),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
 			blockRangeLimit: RANGE,
 		});
 
@@ -127,162 +143,171 @@ describe('createCursor: fetchForward', () => {
 	});
 
 	it('extends the atBlock-anchored span forward, capped by blockRangeLimit and the live span start', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
+		const tip = await getTip();
+		const floor = tip - 400n;
+		const atBlock = floor + 100n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: 1_400n, toBlock: 1_500n}]); // the live/tip-tailed span
+		// the live/tip-tailed span
+		await store.save('k', [{fromBlock: tip - 99n, toBlock: tip}]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
-			atBlock: 1_100n,
+			atBlock,
 		});
 
 		await cursor.fetchForward();
 
-		// window from 1100 would reach 1199 (blockRangeLimit=100), well short of the live span's 1400 start.
+		// window from atBlock would reach atBlock+99 (blockRangeLimit=100), well
+		// short of the live span's start.
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: 1_100n, toBlock: 1_199n},
-			{fromBlock: 1_400n, toBlock: 1_500n},
+			{fromBlock: atBlock, toBlock: atBlock + 99n},
+			{fromBlock: tip - 99n, toBlock: tip},
 		]);
 	});
 
 	it('stops (no-op) once the anchored span has merged into the live span', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
+		const tip = await getTip();
+		const floor = tip - 400n;
+		const atBlock = floor + 100n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: 1_100n, toBlock: 1_500n}]);
+		await store.save('k', [{fromBlock: atBlock, toBlock: tip}]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
-			atBlock: 1_100n,
+			atBlock,
 		});
 
 		const result = await cursor.fetchForward();
 		expect(result).toEqual([]);
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: 1_100n, toBlock: 1_500n},
+			{fromBlock: atBlock, toBlock: tip},
 		]);
 	});
 });
 
 describe('createCursor: isFullyScanned / getLiveSpan / getEarliestSpan', () => {
 	it('is false when nothing has been scanned', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
-		const store = createMemoryStore();
+		const tip = await getTip();
 		const cursor = createCursor({
-			provider,
-			store,
+			provider: realProvider(),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
 			blockRangeLimit: RANGE,
 		});
 		expect(await cursor.isFullyScanned()).toEqual(false);
 	});
 
 	it('is false when an island span touches the floor but has not merged with the live span', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
+		const tip = await getTip();
+		const floor = tip - 400n;
 		const store = createMemoryStore();
 		await store.save('k', [
-			{fromBlock: FLOOR, toBlock: 1_050n},
-			{fromBlock: 1_400n, toBlock: 1_500n},
+			{fromBlock: floor, toBlock: floor + 50n},
+			{fromBlock: tip - 99n, toBlock: tip},
 		]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		});
 		expect(await cursor.isFullyScanned()).toEqual(false);
 	});
 
 	it('is true once exactly one span spans floor to tip', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
+		const tip = await getTip();
+		const floor = tip - 400n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: FLOOR, toBlock: 1_500n}]);
+		await store.save('k', [{fromBlock: floor, toBlock: tip}]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		});
 		expect(await cursor.isFullyScanned()).toEqual(true);
 		expect(await cursor.getLiveSpan()).toEqual({
-			fromBlock: FLOOR,
-			toBlock: 1_500n,
+			fromBlock: floor,
+			toBlock: tip,
 		});
 		expect(await cursor.getEarliestSpan()).toEqual({
-			fromBlock: FLOOR,
-			toBlock: 1_500n,
+			fromBlock: floor,
+			toBlock: tip,
 		});
 	});
 });
 
 describe('createCursor: scanRange and getCellStates', () => {
-	it('scanRange fetches, merges, and persists an arbitrary window', async () => {
-		const logs = [makeLog(1_210n)];
-		const provider = createMockLogsProvider({logs, tip: 1_500n});
-		const store = createMemoryStore();
+	it('scanRange fetches, merges, and persists an arbitrary window around a real log', async () => {
+		const fixture = readEventFixture();
+		const receipt = await logValue(800_001n);
 		const cursor = createCursor({
-			provider,
-			store,
+			provider: realProvider(),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: fixture.address,
+			floorBlock: receipt.blockNumber - 50n,
 			blockRangeLimit: RANGE,
 		});
 
-		const result = await cursor.scanRange(1_200n, 1_299n);
-		expect(result.map((l) => l.blockNumber)).toEqual([1_210n]);
+		const result = await cursor.scanRange(
+			receipt.blockNumber,
+			receipt.blockNumber,
+		);
+		expect(result.map((l) => l.blockNumber)).toEqual([receipt.blockNumber]);
 		expect(await cursor.getScannedSpans()).toEqual([
-			{fromBlock: 1_200n, toBlock: 1_299n},
+			{fromBlock: receipt.blockNumber, toBlock: receipt.blockNumber},
 		]);
 	});
 
 	it('scanRange is a no-op when toBlock < fromBlock', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
-		const store = createMemoryStore();
+		const tip = await getTip();
 		const cursor = createCursor({
-			provider,
-			store,
+			provider: realProvider(),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
 			blockRangeLimit: RANGE,
 		});
 
-		expect(await cursor.scanRange(1_300n, 1_200n)).toEqual([]);
+		expect(await cursor.scanRange(tip, tip - 100n)).toEqual([]);
 		expect(await cursor.getScannedSpans()).toEqual([]);
 	});
 
 	it('getCellStates reflects the scanned spans against a given tip', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_500n});
+		const tip = await getTip();
+		const floor = tip - 300n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: FLOOR, toBlock: 1_099n}]);
+		await store.save('k', [{fromBlock: floor, toBlock: floor + 99n}]);
 		const cursor = createCursor({
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		});
 
-		const cells = await cursor.getCellStates(1_299n);
+		const cells = await cursor.getCellStates(floor + 299n);
 		expect(cells).toEqual([
-			{fromBlock: 1_000n, toBlock: 1_099n, scanned: true},
-			{fromBlock: 1_100n, toBlock: 1_199n, scanned: false},
-			{fromBlock: 1_200n, toBlock: 1_299n, scanned: false},
+			{fromBlock: floor, toBlock: floor + 99n, scanned: true},
+			{fromBlock: floor + 100n, toBlock: floor + 199n, scanned: false},
+			{fromBlock: floor + 200n, toBlock: floor + 299n, scanned: false},
 		]);
 	});
 });

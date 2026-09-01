@@ -1,25 +1,20 @@
 import {describe, it} from 'node:test';
 import {expect} from 'earl';
+import {numberToHex} from 'viem';
 import {
 	clampFromBlock,
 	chunkedFetchLogs,
 	fetchAllLogs,
 } from '../../src/core/chunked-logs.ts';
-import {createMockLogsProvider} from '../fixtures/mock-logs-provider.ts';
-import type {RawLog} from '../../src/adapters/types.ts';
-
-const ADDRESS = '0x0000000000000000000000000000000000000001';
-
-const makeLog = (blockNumber: bigint): RawLog => ({
-	address: ADDRESS,
-	topics: ['0xtopic'],
-	data: '0x',
-	blockNumber,
-	transactionHash: `0xtx${blockNumber}`,
-	logIndex: 0,
-	blockHash: `0xblock${blockNumber}`,
-	transactionIndex: 0,
-});
+import {createViemAdapter} from '../../src/adapters/viem.ts';
+import {
+	LIMITED_RPC_URL,
+	readEventFixture,
+	createViemTestClients,
+	ensureTip,
+	recordCalls,
+	logValue,
+} from '../fixtures/chain-environment.ts';
 
 describe('clampFromBlock', () => {
 	it('returns the candidate when it is above the floor', () => {
@@ -31,73 +26,106 @@ describe('clampFromBlock', () => {
 	});
 });
 
-describe('chunkedFetchLogs', () => {
+describe('chunkedFetchLogs (real Anvil)', () => {
 	it('throws when blockRangeLimit is not positive', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 100n});
+		const {publicClient} = createViemTestClients();
+		const provider = createViemAdapter(publicClient);
 		await expect(
 			chunkedFetchLogs(
 				provider,
-				{address: ADDRESS, fromBlock: 0n, toBlock: 10n},
+				{address: readEventFixture().address, fromBlock: 0n, toBlock: 10n},
 				0n,
 			),
 		).toBeRejectedWith(/blockRangeLimit must be greater than 0/);
 	});
 
-	it('splits the range into blockRangeLimit-sized windows', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 100n});
+	it('splits a real range into blockRangeLimit-sized windows', async () => {
+		const {publicClient} = createViemTestClients();
+		const provider = recordCalls(createViemAdapter(publicClient));
+		const toBlock = await ensureTip(30n);
+		const fromBlock = toBlock - 24n;
+
 		await chunkedFetchLogs(
 			provider,
-			{address: ADDRESS, fromBlock: 100n, toBlock: 124n},
+			{address: readEventFixture().address, fromBlock, toBlock},
 			10n,
 		);
-		expect(provider.calls.map((c) => [c.fromBlock, c.toBlock])).toEqual([
-			[100n, 109n],
-			[110n, 119n],
-			[120n, 124n],
-		]);
+
+		const windows = provider.calls.map((c) => c.toBlock - c.fromBlock + 1n);
+		// 25 blocks in windows of 10: 10, 10, 5.
+		expect(windows).toEqual([10n, 10n, 5n]);
+		expect(provider.calls[0]!.fromBlock).toEqual(fromBlock);
+		expect(provider.calls[provider.calls.length - 1]!.toBlock).toEqual(toBlock);
 	});
 
-	it('finds logs across a range wider than a single RPC call could handle', async () => {
-		const logs = [makeLog(101n), makeLog(150n), makeLog(199n)];
-		const provider = createMockLogsProvider({
-			logs,
-			tip: 200n,
-			maxRangePerCall: 20n,
-		});
+	it('finds real logs across a range wider than one window', async () => {
+		const fixture = readEventFixture();
+		const {publicClient} = createViemTestClients();
+		const provider = recordCalls(createViemAdapter(publicClient));
+
+		const first = await logValue(700_001n);
+		// Mine a few blocks with a non-matching value in between, so the two
+		// logs the topics filter cares about land more than one
+		// blockRangeLimit window apart.
+		for (let i = 0; i < 3; i++) await logValue(700_900n + BigInt(i));
+		const last = await logValue(700_002n);
+
 		const result = await chunkedFetchLogs(
 			provider,
-			{address: ADDRESS, fromBlock: 100n, toBlock: 199n},
-			20n,
+			{
+				address: fixture.address,
+				topics: [
+					null,
+					null,
+					[
+						numberToHex(700_001n, {size: 32}),
+						numberToHex(700_002n, {size: 32}),
+					],
+				],
+				fromBlock: first.blockNumber,
+				toBlock: last.blockNumber,
+			},
+			2n,
 		);
-		expect(result.map((l) => l.blockNumber)).toEqual([101n, 150n, 199n]);
+
+		expect(result.map((l) => l.blockNumber)).toEqual([
+			first.blockNumber,
+			last.blockNumber,
+		]);
+		expect(provider.calls.length).toBeGreaterThan(1);
 	});
 
-	it('rejects if a single unchunked call would exceed the RPC range limit', async () => {
-		const provider = createMockLogsProvider({
-			logs: [],
-			tip: 200n,
-			maxRangePerCall: 20n,
-		});
+	it('rejects if a single unchunked call would exceed the real RPC range limit', async () => {
+		const {publicClient} = createViemTestClients(LIMITED_RPC_URL);
+		const provider = createViemAdapter(publicClient);
+
+		// The limiter's rejection is pure block-range arithmetic (independent
+		// of how far the real chain has actually progressed), so a fixed range
+		// well past rpc-limiter's cap always triggers it.
 		await expect(
 			fetchAllLogs(provider, {
-				address: ADDRESS,
-				fromBlock: 100n,
-				toBlock: 199n,
+				address: readEventFixture().address,
+				fromBlock: 0n,
+				toBlock: 1_000n,
 			}),
 		).toBeRejected();
 	});
 });
 
-describe('fetchAllLogs', () => {
-	it('makes a single unbounded call', async () => {
-		const logs = [makeLog(101n), makeLog(150n)];
-		const provider = createMockLogsProvider({logs, tip: 200n});
+describe('fetchAllLogs (real Anvil)', () => {
+	it('makes a single unbounded call and finds a real log', async () => {
+		const fixture = readEventFixture();
+		const {publicClient} = createViemTestClients();
+		const provider = recordCalls(createViemAdapter(publicClient));
+
+		const receipt = await logValue(700_200n);
 		const result = await fetchAllLogs(provider, {
-			address: ADDRESS,
-			fromBlock: 100n,
-			toBlock: 199n,
+			address: fixture.address,
+			fromBlock: receipt.blockNumber,
+			toBlock: receipt.blockNumber,
 		});
-		expect(result.map((l) => l.blockNumber)).toEqual([101n, 150n]);
+
+		expect(result.length).toEqual(1);
 		expect(provider.calls.length).toEqual(1);
 	});
 });

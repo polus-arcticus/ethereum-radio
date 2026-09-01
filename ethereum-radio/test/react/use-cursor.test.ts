@@ -1,24 +1,35 @@
-import {describe, it} from 'node:test';
+import {before, describe, it} from 'node:test';
 import {expect} from 'earl';
 import {renderHook} from './harness.ts';
 import {useCursor, type UseCursorArgs} from '../../src/react/use-cursor.ts';
 import {createMemoryStore} from '../../src/storage/memory.ts';
-import {createMockLogsProvider} from '../fixtures/mock-logs-provider.ts';
+import {createViemAdapter} from '../../src/adapters/viem.ts';
+import {
+	EMPTY_ADDRESS,
+	LIMITED_RPC_URL,
+	createViemTestClients,
+	ensureTip,
+	getTip,
+} from '../fixtures/chain-environment.ts';
 
-const ADDRESS = '0x0000000000000000000000000000000000000001';
-const FLOOR = 1_000n;
 const RANGE = 100n;
+const realProvider = (rpcUrl?: string) =>
+	createViemAdapter(createViemTestClients(rpcUrl).publicClient);
 
-describe('useCursor', () => {
+// Tests below subtract up to 400 from the real tip to compute floorBlock —
+// on a truly fresh chain (docker-compose just started) that goes negative.
+before(() => ensureTip(500n));
+
+describe('useCursor (real Anvil)', () => {
 	it('seeds a shallow initial window on mount', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_350n});
-		const store = createMemoryStore();
+		const tip = await getTip();
+		const floor = tip - 300n;
 		const args: UseCursorArgs = {
-			provider,
-			store,
+			provider: realProvider(),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		};
 
@@ -28,8 +39,10 @@ describe('useCursor', () => {
 		const harness = await renderHook(useCursor, args);
 		await harness.flush();
 
+		// sync()'s no-live-span seed is clampFromBlock(tip - blockRangeLimit,
+		// floor) — no "+1" — so the window is blockRangeLimit+1 (101) wide.
 		expect(harness.result.scannedSpans).toEqual([
-			{fromBlock: 1_250n, toBlock: 1_350n},
+			{fromBlock: tip - 100n, toBlock: tip},
 		]);
 		expect(harness.result.isLoading).toEqual(false);
 		expect(harness.result.error).toEqual(undefined);
@@ -37,15 +50,16 @@ describe('useCursor', () => {
 	});
 
 	it('fetchHistory extends the earliest span backward and updates state', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_350n});
+		const tip = await getTip();
+		const floor = tip - 400n;
 		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: 1_250n, toBlock: 1_350n}]);
+		await store.save('k', [{fromBlock: tip - 100n, toBlock: tip}]);
 		const args: UseCursorArgs = {
-			provider,
+			provider: realProvider(),
 			store,
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		};
 
@@ -54,20 +68,23 @@ describe('useCursor', () => {
 		await harness.act(() => harness.result.fetchHistory());
 
 		expect(harness.result.scannedSpans).toEqual([
-			{fromBlock: 1_150n, toBlock: 1_350n},
+			{fromBlock: tip - 200n, toBlock: tip},
 		]);
 	});
 
-	it('isFullyScanned becomes true once the scanned span reaches the floor', async () => {
-		const provider = createMockLogsProvider({logs: [], tip: 1_099n});
-		const store = createMemoryStore();
-		await store.save('k', [{fromBlock: FLOOR, toBlock: 1_099n}]);
+	it('isFullyScanned becomes true once the mount sync reaches the floor', async () => {
+		const tip = await getTip();
+		// Comfortably inside sync()'s 101-wide seed window, so the hook's own
+		// mount-triggered sync() alone is enough to reach the floor — no
+		// pre-seeding needed (unlike the mock version, a real chain's tip
+		// can't be pinned to an arbitrary past value).
+		const floor = tip - 50n;
 		const args: UseCursorArgs = {
-			provider,
-			store,
+			provider: realProvider(),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
 			blockRangeLimit: RANGE,
 		};
 
@@ -77,19 +94,16 @@ describe('useCursor', () => {
 		expect(harness.result.isFullyScanned).toEqual(true);
 	});
 
-	it('surfaces provider errors without throwing', async () => {
-		const provider = createMockLogsProvider({
-			logs: [],
-			tip: 1_350n,
-			maxRangePerCall: 0n,
-		});
-		const store = createMemoryStore();
+	it('surfaces real provider errors without throwing', async () => {
+		const tip = await getTip();
+		// blockRangeLimit (100) exceeds rpc-limiter's real cap (10), so the
+		// mount sync's first eth_getLogs call gets a genuine rejection.
 		const args: UseCursorArgs = {
-			provider,
-			store,
+			provider: realProvider(LIMITED_RPC_URL),
+			store: createMemoryStore(),
 			key: 'k',
-			address: ADDRESS,
-			floorBlock: FLOOR,
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
 			blockRangeLimit: RANGE,
 		};
 
