@@ -1,0 +1,37 @@
+---
+sidebar_position: 2
+---
+
+# Adapters
+
+Each adapter wraps a client/provider you've already constructed — neither one ever creates its own, so you stay in full control of chain/transport configuration (RPC URL, chain ID, retries, …).
+
+## `createViemAdapter`
+
+```ts
+import {createViemAdapter} from '@ethereum-radio/indexer/adapters/viem';
+
+function createViemAdapter(client: PublicClient): LogsProvider;
+```
+
+Requires `viem` (optional peer dependency — see [Installation](../installation.mdx)).
+
+viem's typed `getLogs` action only supports ABI event-based filtering (`event`/`events`/`args`), not arbitrary raw `topics` — since this package deliberately stays ABI-decoding-agnostic (see [Core](./core.mdx#logsprovider)), the adapter instead calls the raw `eth_getLogs` JSON-RPC method directly (`client.request({method: 'eth_getLogs', ...})`) and formats each result with viem's own `formatLog`, mirroring what viem's `getLogs` does internally before it hands off to ABI decoding.
+
+**Gotcha:** without an explicit `chain` config, viem's `getBlockNumber()` defaults to a 4-second `cacheTime` — fine for typical polling, but if you're driving `createRadio`/`radio()` with a short `pollIntervalMs`, the client can keep returning a stale cached tip for up to 4 real seconds after a new block lands. Pass `cacheTime: 0` (or a `chain` config with an accurate block time) to `createPublicClient` if you want fast polling to actually see new blocks promptly.
+
+## `createEthersAdapter`
+
+```ts
+import {createEthersAdapter} from '@ethereum-radio/indexer/adapters/ethers';
+
+function createEthersAdapter(provider: Provider): LogsProvider;
+```
+
+Requires `ethers` (optional peer dependency — see [Installation](../installation.mdx)).
+
+Normalizes the two places ethers v6's shape differs from viem's: `provider.getBlockNumber()` returns a plain `number` (wrapped in `BigInt(...)` here), and a log's index field is named `index` rather than `logIndex`.
+
+## Why an adapter at all?
+
+Both libraries expose a native, stateless `getLogs(filter)` and `getBlockNumber()` — normalizing them to one shared [`LogsProvider`](./core.mdx#logsprovider) interface is what lets `Cursor`/`createRadio`/`chunkedFetchLogs` work identically regardless of which client library you use. It also sidesteps a subtler issue: a naive chunked fetcher built on `createContractEventFilter` + `getFilterLogs` (a server-side filter handle) can silently misbehave against a round-robin/load-balanced RPC backend, since the filter's state may not exist on whichever backend node answers the next call. Both adapters here call the stateless `getLogs` once per window instead, which has no such failure mode.

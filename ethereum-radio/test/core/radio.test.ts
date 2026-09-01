@@ -1,7 +1,7 @@
 import {before, describe, it} from 'node:test';
 import {expect} from 'earl';
 import {numberToHex} from 'viem';
-import {radio} from '../../src/core/radio.ts';
+import {radio, createRadio} from '../../src/core/radio.ts';
 import {createCursor} from '../../src/core/cursor.ts';
 import {createMemoryStore} from '../../src/storage/memory.ts';
 import {createViemAdapter} from '../../src/adapters/viem.ts';
@@ -174,5 +174,53 @@ describe('radio (real Anvil)', () => {
 		await iteration; // resolves once the generator observes the abort and returns
 
 		expect(results).toEqual([]);
+	});
+});
+
+describe('createRadio (real Anvil)', () => {
+	it('streams via for-await directly, no separate radio(cursor) call needed', async () => {
+		const fixture = readEventFixture();
+		const receipt = await logValue(999_600n);
+		const store = createMemoryStore();
+		const radioInstance = createRadio(
+			{
+				provider: recordCalls(realProvider()),
+				store,
+				key: 'k',
+				address: fixture.address,
+				topics: [null, null, numberToHex(999_600n, {size: 32})],
+				floorBlock: receipt.blockNumber - 300n,
+				blockRangeLimit: RANGE,
+			},
+			{pollIntervalMs: 5},
+		);
+
+		const received: bigint[][] = [];
+		for await (const chunk of radioInstance) {
+			received.push(chunk.map((l) => l.blockNumber));
+			break; // first chunk is from the initial sync()
+		}
+
+		expect(received).toEqual([[receipt.blockNumber]]);
+	});
+
+	it('exposes Cursor methods on the same object, independent of iteration', async () => {
+		const floor = await getTip();
+		const store = createMemoryStore();
+		await store.save('k', [{fromBlock: floor, toBlock: floor}]);
+		const radioInstance = createRadio({
+			provider: realProvider(),
+			store,
+			key: 'k',
+			address: EMPTY_ADDRESS,
+			floorBlock: floor,
+			blockRangeLimit: RANGE,
+		});
+
+		// Cursor methods work without ever touching the async-iterator side.
+		expect(await radioInstance.isFullyScanned()).toEqual(true);
+		expect(await radioInstance.getScannedSpans()).toEqual([
+			{fromBlock: floor, toBlock: floor},
+		]);
 	});
 });

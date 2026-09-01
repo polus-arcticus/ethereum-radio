@@ -1,0 +1,60 @@
+---
+sidebar_position: 4
+---
+
+# Sync (IPFS snapshots)
+
+Requires `helia` + `@helia/json` (optional peer dependencies — see [Installation](../installation.mdx)). Import from `@ethereum-radio/indexer/sync/ipfs`.
+
+This is an optional, opt-in layer for bootstrapping a new client from a previously-published scan snapshot instead of re-scanning from `floorBlock` over RPC — useful for a widely-used contract where re-walking the full history on every first visit is wasteful. It's entirely decoupled from `Cursor`/`createRadio`: nothing in the core streaming/scanning path knows Helia exists, and nothing here touches a `SpanStore` directly. You call these functions explicitly, at the edges.
+
+## `RadioSnapshot`
+
+```ts
+interface RadioSnapshot {
+	spans: Span[];
+	logs: RawLog[];
+}
+```
+
+`spans` is what a `SpanStore` needs to consider that history already scanned; `logs` is whatever matching logs you've accumulated app-side for that history. What you do with `logs` (render them, cache them elsewhere) is entirely up to you — this module has no opinion on app-level log storage.
+
+## `exportSnapshot`
+
+```ts
+function exportSnapshot(fs: JsonBlockstore, snapshot: RadioSnapshot): Promise<CID>;
+```
+
+Publishes a snapshot's spans + logs as one content-addressed IPFS object, returning the `CID` to pin/share. Call this after some scanning, with `await cursor.getScannedSpans()` plus whatever logs you've collected.
+
+## `importSnapshot`
+
+```ts
+function importSnapshot(fs: JsonBlockstore, cid: CID): Promise<RadioSnapshot>;
+```
+
+Fetches a previously-exported snapshot back. Typical use: before starting `createRadio(...)`, import a known snapshot and seed the store with its spans (`await store.save(key, snapshot.spans)`) so the cursor already considers that history scanned — `createRadio`/`radio()` then only need to fill the remaining gap up to the tip.
+
+## `JsonBlockstore`
+
+```ts
+interface JsonBlockstore {
+	add(value: unknown): Promise<CID>;
+	get<T = unknown>(cid: CID): Promise<T>;
+}
+```
+
+A small structural interface — not a hard dependency on Helia's own types — satisfied by `json(helia)` from `@helia/json`:
+
+```ts
+import {createHelia} from 'helia';
+import {json} from '@helia/json';
+import {exportSnapshot, importSnapshot} from '@ethereum-radio/indexer/sync/ipfs';
+
+const helia = await createHelia();
+const fs = json(helia);
+
+const cid = await exportSnapshot(fs, {spans, logs});
+// ...later, on a different client:
+const snapshot = await importSnapshot(fs, cid);
+```

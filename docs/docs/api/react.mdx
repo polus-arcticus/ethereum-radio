@@ -1,0 +1,58 @@
+---
+sidebar_position: 5
+---
+
+# React
+
+Requires `react` (optional peer dependency — see [Installation](../installation.mdx)). Import from `@ethereum-radio/indexer/react`.
+
+## `useCursor`
+
+```ts
+import {useCursor} from '@ethereum-radio/indexer/react';
+
+function useCursor(args: UseCursorArgs): UseCursorResult;
+```
+
+A thin binding over the same [`Cursor`](../api/core.mdx#cursor) engine `createRadio` uses — plain `useState`/`useEffect`/`useCallback`, no `@tanstack/react-query` or other caching layer. A consumer wanting request de-duplication across multiple `useCursor` call sites pointed at the same key should reach for a real query-cache library on top of this.
+
+### `UseCursorArgs`
+
+```ts
+interface UseCursorArgs {
+	provider: LogsProvider;
+	store: SpanStore;
+	key: string;
+	address: string | string[];
+	topics?: (string | string[] | null)[];
+	floorBlock: bigint;
+	blockRangeLimit: bigint;
+	/** Optional forward-scan anchor — enables fetchForward() extending from a known block. */
+	atBlock?: bigint;
+	/** If set, re-runs the tip-tailing sync on this interval (ms). Default: no polling. */
+	pollIntervalMs?: number;
+}
+```
+
+Same shape as [`CursorConfig`](../api/core.mdx#createcursor), plus `pollIntervalMs`.
+
+### `UseCursorResult`
+
+```ts
+interface UseCursorResult {
+	scannedSpans: Span[];
+	cellStates: Cell[];
+	isFullyScanned: boolean;
+	isLoading: boolean;
+	error: Error | undefined;
+	tip: bigint | undefined;
+	scanRange: (fromBlock: bigint, toBlock: bigint) => Promise<RawLog[]>;
+	fetchHistory: () => Promise<RawLog[]>;
+	fetchForward: () => Promise<RawLog[]>;
+	refresh: () => Promise<void>;
+}
+```
+
+On mount (and whenever the cursor's identity changes — a different `key`/`address`/`topics`), the hook runs an initial tip-tailing `sync()` automatically. If `pollIntervalMs` is set, it repeats that sync on an interval — a simple, adapter-agnostic substitute for a live push subscription, since a real push subscription would need a watch-capable provider (which viem and ethers support differently), out of scope for this package's framework-agnostic core.
+
+`scanRange`/`fetchHistory`/`fetchForward` are the same operations as on a [`Cursor`](../api/core.mdx#cursor), wired to update `scannedSpans`/`isLoading`/`error` as they run. There's no equivalent of `createRadio`'s `for await` stream exposed here — this hook is for driving the cursor imperatively from component code (a "load more history" button, a scan-progress grid from `cellStates`); reach for `createRadio` directly (e.g. inside a `useEffect`) if you want the push-style stream inside a component instead.

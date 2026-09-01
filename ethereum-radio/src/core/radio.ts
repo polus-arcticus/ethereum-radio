@@ -1,5 +1,5 @@
 import type {RawLog} from '../adapters/types.ts';
-import type {Cursor} from './cursor.ts';
+import {createCursor, type Cursor, type CursorConfig} from './cursor.ts';
 
 export interface RadioOptions {
 	/** Delay between live-tail sync() polls once history is fully replayed. */
@@ -62,3 +62,27 @@ export async function* radio(
 		await abortableDelay(pollIntervalMs, signal);
 	}
 }
+
+// A Cursor that's also directly streamable — the top-level entry point for
+// most consumers. `for await (const logs of radio)` drives the same replay-
+// then-tail loop as radio(cursor, options), while every Cursor method
+// (isFullyScanned(), getCellStates(), fetchHistory() for manual control,
+// etc.) stays available on the same object, so picking the stream doesn't
+// mean giving up the imperative escape hatch. A plain factory (no `new`) to
+// stay consistent with createCursor/createViemAdapter/createMemoryStore —
+// this is the only object in the package that's both, everything else is
+// either an imperative interface (Cursor) or a bare generator (radio()).
+export interface Radio extends Cursor {
+	[Symbol.asyncIterator](): AsyncGenerator<RawLog[]>;
+}
+
+export const createRadio = (
+	config: CursorConfig,
+	options: RadioOptions = {},
+): Radio => {
+	const cursor = createCursor(config);
+	return {
+		...cursor,
+		[Symbol.asyncIterator]: () => radio(cursor, options),
+	};
+};

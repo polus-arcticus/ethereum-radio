@@ -1,0 +1,124 @@
+---
+sidebar_position: 1
+---
+
+# Core
+
+Root import: `import {...} from '@ethereum-radio/indexer'` (or the equivalent `@ethereum-radio/indexer/core/*` subpath for any individual module). Everything on this page is dependency-free — no viem, ethers, react, or helia required.
+
+## `createRadio`
+
+The primary entry point. A [`Cursor`](#cursor) that's also directly `AsyncIterable<RawLog[]>`.
+
+```ts
+function createRadio(config: CursorConfig, options?: RadioOptions): Radio;
+
+interface Radio extends Cursor {
+	[Symbol.asyncIterator](): AsyncGenerator<RawLog[]>;
+}
+```
+
+`for await (const logs of radio)` replays scanned history in `blockRangeLimit`-sized chunks (newest-first, walking backward from the tip) until `floorBlock` is reached, then switches to polling the tip forever, yielding only non-empty chunks. Every [`Cursor`](#cursor) method is also available directly on the returned object — streaming and imperative control aren't an either/or.
+
+A plain factory, not a class — consistent with every other constructor in this package (`createCursor`, `createViemAdapter`, `createMemoryStore`, …).
+
+## `radio`
+
+The lower-level generator `createRadio` is built on, for when you already have a `Cursor` (e.g. one built by `createCursor` directly) and don't want the combined `Radio` object:
+
+```ts
+function radio(cursor: Cursor, options?: RadioOptions): AsyncGenerator<RawLog[]>;
+
+interface RadioOptions {
+	/** Delay between live-tail sync() polls once history is fully replayed. Default: 4000ms. */
+	pollIntervalMs?: number;
+	signal?: AbortSignal;
+}
+```
+
+Cancellation is the standard `for await...of` + `break` pattern, or pass `signal` to cancel from outside the loop body (e.g. a React effect's cleanup).
+
+## `Cursor`
+
+```ts
+interface Cursor {
+	scanRange(fromBlock: bigint, toBlock: bigint): Promise<RawLog[]>;
+	sync(): Promise<RawLog[]>;
+	fetchHistory(): Promise<RawLog[]>;
+	fetchForward(): Promise<RawLog[]>;
+	getScannedSpans(): Promise<Span[]>;
+	getCellStates(tip: bigint): Promise<Cell[]>;
+	isFullyScanned(): Promise<boolean>;
+	getLiveSpan(): Promise<Span | undefined>;
+	getEarliestSpan(): Promise<Span | undefined>;
+}
+```
+
+- **`scanRange(fromBlock, toBlock)`** — the one primitive everything else delegates to: fetch logs in that window (chunked under the hood to respect `blockRangeLimit`), merge the window into the store's scanned spans, and return the logs found.
+- **`sync()`** — extend from wherever the live (tip-tailing) span currently ends up to the real chain tip, seeding a shallow initial window if nothing has been scanned yet. This is what `createRadio`/`radio()` call both first and on every live-tail poll.
+- **`fetchHistory()`** — extend the earliest known span one `blockRangeLimit` window further back toward `floorBlock`. A no-op once the floor is reached.
+- **`fetchForward()`** — only meaningful with `atBlock` configured: extend that anchor's span one window forward, toward the live span. A no-op if no `atBlock` was given, or once the anchored span has merged into the live span.
+- **`getCellStates(tip)`** — every `blockRangeLimit`-sized window between `floorBlock` and `tip`, tagged scanned/unscanned — the data a scan-progress grid renders from.
+- **`isFullyScanned()`** — true once exactly one span covers `floorBlock` through the live tip (an island span that merely touches the floor without having merged into the live span reports `false`).
+
+## `createCursor`
+
+```ts
+function createCursor(config: CursorConfig): Cursor;
+
+interface CursorConfig {
+	provider: LogsProvider;
+	store: SpanStore;
+	/** Storage key, caller-owned (e.g. `${chainId}:${address}:${topic0}`). */
+	key: string;
+	address: string | string[];
+	topics?: (string | string[] | null)[];
+	/** A floor below which logs can't exist (e.g. a contract's deployment block). */
+	floorBlock: bigint;
+	blockRangeLimit: bigint;
+	/** Optional forward-scan anchor — enables fetchForward() extending from a known block. */
+	atBlock?: bigint;
+}
+```
+
+`createRadio`/`radio()` compose a `Cursor` for you; reach for `createCursor` directly when you want the imperative interface without a stream — e.g. driving a scan-progress UI where the user clicks "load more history" instead of an always-on `for await`.
+
+No caching between calls — every method re-reads the store fresh rather than trusting possibly-stale in-memory state, so it stays correct if you have two calls in flight at once (e.g. `fetchHistory()` and `fetchForward()` both running).
+
+## `LogsProvider`
+
+```ts
+interface LogsProvider {
+	getBlockNumber(): Promise<bigint>;
+	getLogs(params: GetLogsParams): Promise<RawLog[]>;
+}
+
+interface GetLogsParams {
+	address: string | string[];
+	topics?: (string | string[] | null)[];
+	fromBlock: bigint;
+	toBlock: bigint;
+}
+
+interface RawLog {
+	address: string;
+	topics: string[];
+	data: string;
+	blockNumber: bigint;
+	transactionHash: string;
+	logIndex: number;
+	blockHash: string;
+	transactionIndex: number;
+	removed?: boolean;
+}
+```
+
+The minimal client-agnostic surface everything in this package is built on. See [Adapters](./adapters.mdx) for the `createViemAdapter`/`createEthersAdapter` factories that produce one from a client/provider you already constructed. Decoding `topics`/`data` into typed event arguments is intentionally out of scope — see [Installation](../installation.mdx).
+
+## Internal building blocks
+
+A few smaller pieces the above compose, exported (via the `./core/*` subpath) mainly so their pure logic is independently testable — most consumers won't reach for these directly:
+
+- **`Span {fromBlock, toBlock}`**, **`mergeSpan(spans, span)`**, **`cellStates(spans, floor, tip, blockRangeLimit)`** (`@ethereum-radio/indexer/core/spans`) — the sparse "what's already been scanned" representation `Cursor` is built on.
+- **`clampFromBlock`**, **`chunkedFetchLogs`**, **`fetchAllLogs`** (`@ethereum-radio/indexer/core/chunked-logs`) — splits a wide range into `blockRangeLimit`-sized `getLogs` calls.
+- **`detectRpcCapabilities`**, **`safeBlockRangeLimit`** (`@ethereum-radio/indexer/core/rpc-doctor`) — probes a `LogsProvider` to find the widest `eth_getLogs` range it actually supports, for when you don't already know a safe `blockRangeLimit` for a given RPC.

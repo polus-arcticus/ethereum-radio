@@ -1,0 +1,129 @@
+---
+sidebar_position: 2
+---
+
+# Usage
+
+This walks through indexing one event filter end to end: pick an adapter, pick a store, then stream matching logs with `createRadio`.
+
+## 1. Pick an adapter
+
+An adapter wraps a client/provider you already constructed — this package never creates its own. Pick the subpath matching whichever library you use; both normalize to the same [`LogsProvider`](./api/core.mdx#logsprovider) shape.
+
+```ts
+import {createPublicClient, http} from 'viem';
+import {mainnet} from 'viem/chains';
+import {createViemAdapter} from '@ethereum-radio/indexer/adapters/viem';
+
+const publicClient = createPublicClient({chain: mainnet, transport: http()});
+const provider = createViemAdapter(publicClient);
+```
+
+or with ethers:
+
+```ts
+import {JsonRpcProvider} from 'ethers';
+import {createEthersAdapter} from '@ethereum-radio/indexer/adapters/ethers';
+
+const ethersProvider = new JsonRpcProvider('https://your-rpc-url');
+const provider = createEthersAdapter(ethersProvider);
+```
+
+## 2. Pick a store
+
+A [`SpanStore`](./api/storage.mdx) is where scan progress (which block ranges have already been checked) gets persisted, so the next run doesn't rescan from scratch. Start with the in-memory store; swap in `createLocalStorageStore()` once you want progress to survive a page reload.
+
+```ts
+import {createMemoryStore} from '@ethereum-radio/indexer/storage/memory';
+
+const store = createMemoryStore();
+```
+
+```ts
+import {createLocalStorageStore} from '@ethereum-radio/indexer/storage/local-storage';
+
+const store = createLocalStorageStore(); // backed by window.localStorage
+```
+
+## 3. Stream logs with `createRadio`
+
+```ts
+import {createRadio} from '@ethereum-radio/indexer';
+
+const radio = createRadio({
+	provider,
+	store,
+	key: 'mainnet:0xYourContract:Transfer', // caller-owned — this package doesn't prescribe a scheme
+	address: '0xYourContractAddress',
+	floorBlock: 18_000_000n, // e.g. the contract's deployment block
+	blockRangeLimit: 5_000n, // how wide a single eth_getLogs call is allowed to be
+});
+
+for await (const logs of radio) {
+	for (const log of logs) {
+		console.log(log.blockNumber, log.transactionHash);
+	}
+}
+```
+
+`createRadio` replays history in `blockRangeLimit`-sized chunks first — oldest scanned window last, since it walks backward from the tip — then switches to polling the tip forever once `floorBlock` is reached, yielding only when a chunk actually contains matching logs. `break`ing the loop (or aborting an `AbortSignal` passed as `{signal}` in the second argument) stops it cleanly; there's no separate subscribe/unsubscribe call to remember.
+
+### The imperative side
+
+`radio` is also the underlying [`Cursor`](./api/core.mdx#cursor) — every method is right there on the same object, for when you want more control than "just give me the stream":
+
+```ts
+await radio.isFullyScanned(); // caught up to floorBlock and the tip?
+await radio.getCellStates(await provider.getBlockNumber()); // scan-progress grid for a UI
+await radio.fetchHistory(); // manually pull one more window of history
+await radio.fetchForward(); // manually advance an atBlock-anchored forward walk
+```
+
+This is handy for a scan-progress UI (color a grid of cells scanned/unscanned via `getCellStates`) or for driving the backfill on a button click instead of automatically.
+
+## 4. React
+
+If you're in a React component, `useCursor` wraps the same [`Cursor`](./api/core.mdx#cursor) engine as plain hook state — no `@tanstack/react-query`, just `useState`/`useEffect`:
+
+```tsx
+import {useCursor} from '@ethereum-radio/indexer/react';
+
+function TransferFeed() {
+	const {scannedSpans, isFullyScanned, isLoading, error, fetchHistory} =
+		useCursor({
+			provider,
+			store,
+			key: 'mainnet:0xYourContract:Transfer',
+			address: '0xYourContractAddress',
+			floorBlock: 18_000_000n,
+			blockRangeLimit: 5_000n,
+			pollIntervalMs: 10_000, // re-sync to the tip on an interval
+		});
+
+	// ...
+}
+```
+
+See [`api/react.mdx`](./api/react.mdx) for the full `UseCursorArgs`/`UseCursorResult` shape.
+
+## Filtering on hashed dynamic types
+
+Solidity hashes `indexed string`/`indexed bytes` event parameters into their topic — the topic is `keccak256(value)`, not the value itself. This trips people up because it's invisible in the ABI; only the EVM's actual event-encoding rules make it true. To filter on one, hash the value yourself before passing it in `topics`:
+
+```ts
+import {keccak256, toBytes} from 'viem';
+
+const radio = createRadio({
+	provider,
+	store,
+	key: 'mainnet:0xYourContract:NameRegistered',
+	address: '0xYourContractAddress',
+	// topics[0] (the event signature) left `null` to match any event at this
+	// address; topics[2] filters to exactly `name === 'alice'`.
+	topics: [null, null, keccak256(toBytes('alice'))],
+	floorBlock: 18_000_000n,
+	blockRangeLimit: 5_000n,
+});
+```
+
+(ethers' equivalent is `keccak256(toUtf8Bytes('alice'))`.) A plain indexed value type (`address`, `uint256`, …) doesn't need this — its topic is just the ABI-encoded value, so you can filter on it directly.

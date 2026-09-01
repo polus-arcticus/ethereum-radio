@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Installation
+
+```bash
+pnpm add @ethereum-radio/indexer
+```
+
+<Tabs groupId="package-manager">
+  <TabItem value="npm" label="npm">
+
+```bash
+npm install @ethereum-radio/indexer
+```
+
+  </TabItem>
+  <TabItem value="yarn" label="yarn">
+
+```bash
+yarn add @ethereum-radio/indexer
+```
+
+  </TabItem>
+</Tabs>
+
+The package is ESM-only (`"type": "module"`) and ships plain TypeScript sources alongside the compiled `dist/` output, so it works with Node's native TypeScript execution as well as a bundler.
+
+## Peer dependencies
+
+Installing `@ethereum-radio/indexer` alone pulls in **nothing else** — every client library, framework, and storage integration it can talk to is an optional peer dependency. Install only what you actually use:
+
+| Package                  | Needed for                                                        |
+| ------------------------ | ------------------------------------------------------------------- |
+| `viem` **or** `ethers`   | Talking to an RPC — pick one, not both. See [Usage](./usage.mdx).   |
+| `react`                  | The `useCursor` hook (`@ethereum-radio/indexer/react`).             |
+| `helia` + `@helia/json`  | Exporting/importing scan-state snapshots over IPFS (`.../sync/ipfs`). |
+
+None of these appear in the package's dependency graph unless you install them yourself — the root import (`@ethereum-radio/indexer`) never transitively pulls in viem, ethers, react, or helia. Each integration lives behind its own [subpath export](./api/core.mdx) specifically so a consumer only bundles what they use.
+
+Decoding ABI event data (turning `topics`/`data` back into typed arguments) is intentionally out of scope for this package — you already have `viem`'s `decodeEventLog` or `ethers`' `Interface.parseLog` available once you've installed one of them. `@ethereum-radio/indexer`'s job stops at tracking which block ranges have been scanned and handing back the raw logs found in them.
