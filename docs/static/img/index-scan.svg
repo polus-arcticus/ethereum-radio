@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Scanning block ranges for events">
+	<style>
+		.er-block-fill {
+			animation: er-fill 3.6s ease-in-out infinite;
+			opacity: 0;
+		}
+		.er-scanline {
+			animation: er-sweep 3.6s linear infinite;
+		}
+		@keyframes er-fill {
+			0%, 6% { opacity: 0; }
+			14%, 82% { opacity: 1; }
+			90%, 100% { opacity: 0; }
+		}
+		@keyframes er-sweep {
+			0% { transform: translateY(0); }
+			100% { transform: translateY(288px); }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			.er-block-fill { animation: none; opacity: 1; }
+			.er-scanline { animation: none; opacity: 0; }
+		}
+	</style>
+
+	<g stroke="#c7d2fe" stroke-width="2" fill="none">
+		<rect x="90" y="52" width="220" height="44" rx="8"/>
+		<rect x="90" y="110" width="220" height="44" rx="8"/>
+		<rect x="90" y="168" width="220" height="44" rx="8"/>
+		<rect x="90" y="226" width="220" height="44" rx="8"/>
+		<rect x="90" y="284" width="220" height="44" rx="8"/>
+		<rect x="90" y="342" width="220" height="44" rx="8"/>
+	</g>
+
+	<g>
+		<rect class="er-block-fill" style="animation-delay:0s" x="92" y="54" width="216" height="40" rx="6" fill="#6366f1"/>
+		<rect class="er-block-fill" style="animation-delay:0.6s" x="92" y="112" width="216" height="40" rx="6" fill="#6366f1"/>
+		<rect class="er-block-fill" style="animation-delay:1.2s" x="92" y="170" width="216" height="40" rx="6" fill="#6366f1"/>
+		<rect class="er-block-fill" style="animation-delay:1.8s" x="92" y="228" width="216" height="40" rx="6" fill="#6366f1"/>
+		<rect class="er-block-fill" style="animation-delay:2.4s" x="92" y="286" width="216" height="40" rx="6" fill="#6366f1"/>
+		<rect class="er-block-fill" style="animation-delay:3.0s" x="92" y="344" width="216" height="40" rx="6" fill="#6366f1"/>
+	</g>
+
+	<g fill="#a5b4fc" font-family="monospace" font-size="12" opacity="0.9">
+		<text x="104" y="79">0x1a2…</text>
+		<text x="104" y="137">0x1a2…</text>
+		<text x="104" y="195">0x1a2…</text>
+		<text x="104" y="253">0x1a2…</text>
+		<text x="104" y="311">0x1a2…</text>
+		<text x="104" y="369">0x1a2…</text>
+	</g>
+
+	<g class="er-scanline">
+		<rect x="86" y="48" width="228" height="4" rx="2" fill="#22d3ee"/>
+		<rect x="86" y="48" width="228" height="4" rx="2" fill="#22d3ee" opacity="0.4" transform="translate(0,-6)"/>
+	</g>
+</svg>

@@ -12,7 +12,7 @@ type FeatureItem = {
 const FeatureList: FeatureItem[] = [
   {
     title: 'Client-Side Indexing',
-    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    Svg: require('@site/static/img/index-scan.svg').default,
     description: (
       <>
         Track which block ranges have already been scanned and resume from
@@ -22,7 +22,7 @@ const FeatureList: FeatureItem[] = [
   },
   {
     title: 'Adapter-Agnostic',
-    Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
+    Svg: require('@site/static/img/adapter-plug.svg').default,
     description: (
       <>
         Works with <code>viem</code> or <code>ethers</code> — pick one, wrap
@@ -33,7 +33,7 @@ const FeatureList: FeatureItem[] = [
   },
   {
     title: 'Storage-Agnostic',
-    Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
+    Svg: require('@site/static/img/storage-swap.svg').default,
     description: (
       <>
         Scan progress lives behind a tiny, swappable <code>SpanStore</code>{' '}
