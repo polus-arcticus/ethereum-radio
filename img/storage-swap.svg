@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Swappable storage behind one interface">
+	<style>
+		.er-mod, .er-link {
+			animation: er-active 4.5s ease-in-out infinite;
+			opacity: 0.35;
+		}
+		.er-mod--1, .er-link--1 { animation-delay: 0s; }
+		.er-mod--2, .er-link--2 { animation-delay: 1.5s; }
+		.er-mod--3, .er-link--3 { animation-delay: 3s; }
+		@keyframes er-active {
+			0%, 8% { opacity: 0.35; }
+			15%, 25% { opacity: 1; }
+			33%, 100% { opacity: 0.35; }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			.er-mod, .er-link { animation: none; opacity: 0.8; }
+		}
+	</style>
+
+	<g stroke="#a5b4fc" stroke-width="2.5" fill="none">
+		<path class="er-link er-link--1" d="M 96 165 Q 96 225 185 262"/>
+		<path class="er-link er-link--2" d="M 200 165 L 200 262"/>
+		<path class="er-link er-link--3" d="M 304 165 Q 304 225 215 262"/>
+	</g>
+
+	<g class="er-mod er-mod--1" transform="translate(96,118)">
+		<rect x="-38" y="-38" width="76" height="76" rx="12" fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
+		<g stroke="#4338ca" stroke-width="4" stroke-linecap="round">
+			<line x1="-18" y1="-14" x2="18" y2="-14"/>
+			<line x1="-18" y1="0" x2="18" y2="0"/>
+			<line x1="-18" y1="14" x2="18" y2="14"/>
+		</g>
+	</g>
+
+	<g class="er-mod er-mod--2" transform="translate(200,118)">
+		<rect x="-38" y="-38" width="76" height="76" rx="12" fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
+		<line x1="-38" y1="-17" x2="38" y2="-17" stroke="#4338ca" stroke-width="2.5"/>
+		<circle cx="-26" cy="-27.5" r="3.5" fill="#4338ca"/>
+		<circle cx="-13" cy="-27.5" r="3.5" fill="#4338ca"/>
+		<rect x="-22" y="-2" width="44" height="26" rx="4" fill="none" stroke="#4338ca" stroke-width="2.5"/>
+	</g>
+
+	<g class="er-mod er-mod--3" transform="translate(304,118)">
+		<path d="M -38 -14 L -10 -14 Q -10 -28 4 -28 Q 18 -28 18 -14 L 38 -14 L 38 14 L 18 14 Q 18 28 4 28 Q -10 28 -10 14 L -38 14 Z"
+			fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
+	</g>
+
+	<g transform="translate(200,300)">
+		<path d="M -76 -38 A 76 20 0 0 1 76 -38 L 76 28 A 76 20 0 0 1 -76 28 Z" fill="#c7d2fe" stroke="#4338ca" stroke-width="3"/>
+		<ellipse cx="0" cy="-38" rx="76" ry="20" fill="#e0e7ff" stroke="#4338ca" stroke-width="3"/>
+		<g stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" opacity="0.7">
+			<line x1="-40" y1="4" x2="40" y2="4"/>
+			<line x1="-40" y1="14" x2="40" y2="14"/>
+		</g>
+	</g>
+</svg>

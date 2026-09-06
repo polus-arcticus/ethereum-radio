@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Ethereum Radio">
+	<g fill="none" stroke="#22d3ee" stroke-linecap="round">
+		<path d="M 38 20 A 8 8 0 0 1 30 12" stroke-width="4.5"/>
+		<path d="M 46 20 A 16 16 0 0 1 30 4" stroke-width="4.5" opacity="0.55"/>
+	</g>
+	<g stroke="rgba(15, 23, 42, 0.35)" stroke-width="1" stroke-linejoin="round">
+		<polygon points="30,20 12,40 30,40" fill="#a5b4fc"/>
+		<polygon points="30,20 30,40 48,40" fill="#6366f1"/>
+		<polygon points="12,40 30,60 30,40" fill="#4f46e5"/>
+		<polygon points="48,40 30,40 30,60" fill="#3730a3"/>
+	</g>
+</svg>

@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="One core, swappable client adapters">
+	<style>
+		.er-ring {
+			animation: er-ring-pulse 2.8s ease-out infinite;
+			transform-origin: 200px 200px;
+		}
+		.er-ring--outer { animation-delay: 0.9s; }
+		@keyframes er-ring-pulse {
+			0% { opacity: 0.6; transform: scale(0.6); }
+			100% { opacity: 0; transform: scale(1.15); }
+		}
+		.er-pulse-left {
+			offset-path: path('M 118 200 L 160 200');
+			animation: er-travel 2.2s ease-in-out infinite alternate;
+		}
+		.er-pulse-right {
+			offset-path: path('M 240 200 L 282 200');
+			animation: er-travel 2.2s ease-in-out infinite alternate-reverse;
+		}
+		@keyframes er-travel {
+			0% { offset-distance: 0%; opacity: 0.2; }
+			50% { opacity: 1; }
+			100% { offset-distance: 100%; opacity: 0.2; }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			.er-ring { animation: none; opacity: 0; }
+			.er-pulse-left, .er-pulse-right { animation: none; opacity: 0.6; }
+		}
+	</style>
+
+	<g stroke="#cbd5e1" stroke-width="3" stroke-dasharray="6 6">
+		<line x1="118" y1="200" x2="160" y2="200"/>
+		<line x1="240" y1="200" x2="282" y2="200"/>
+	</g>
+
+	<circle class="er-pulse-left" cx="118" cy="200" r="6" fill="#22d3ee"/>
+	<circle class="er-pulse-right" cx="240" cy="200" r="6" fill="#22d3ee"/>
+
+	<circle cx="200" cy="200" r="42" fill="#eef2ff" stroke="#6366f1" stroke-width="3"/>
+	<circle class="er-ring" cx="200" cy="200" r="18" fill="none" stroke="#6366f1" stroke-width="2.5"/>
+	<circle class="er-ring er-ring--outer" cx="200" cy="200" r="18" fill="none" stroke="#6366f1" stroke-width="2.5"/>
+	<circle cx="200" cy="200" r="8" fill="#6366f1"/>
+
+	<g transform="translate(78,200)">
+		<polygon points="0,-34 28,0 0,34 -28,0" fill="#a5b4fc" stroke="#4338ca" stroke-width="3"/>
+	</g>
+
+	<g transform="translate(322,200)">
+		<polygon points="-14,-32 14,-32 28,0 14,32 -14,32 -28,0" fill="#c4b5fd" stroke="#5b21b6" stroke-width="3"/>
+	</g>
+</svg>
