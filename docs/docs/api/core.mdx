@@ -86,6 +86,57 @@ Requires two things `CursorConfig` doesn't need for anything else:
 
 Calling it without either throws — it's opt-in, not a requirement for every `Cursor`.
 
+## `detectRpcCapabilities`
+
+Probes a `LogsProvider` to find the widest `eth_getLogs` range it actually supports — what [step 2 of Usage](../usage.mdx#2-pick-a-blockrangelimit) uses instead of guessing a `blockRangeLimit` literal.
+
+```ts
+import {detectRpcCapabilities, safeBlockRangeLimit} from '@ethereum-radio/indexer/core/rpc-doctor';
+
+function detectRpcCapabilities(
+	provider: LogsProvider,
+	address: string,
+	toBlock: bigint,
+	onUpdate?: (results: RpcDoctorResults) => void,
+): Promise<RpcDoctorResults>;
+
+type RpcDoctorTestStatus = 'idle' | 'running' | 'pass' | 'fail';
+
+interface RpcDoctorResults {
+	getLogs: RpcDoctorTestStatus;
+	maxBlockRange: bigint | null;
+	logErrors: string[];
+}
+
+function safeBlockRangeLimit(maxBlockRange: bigint): bigint;
+```
+
+Two tests run in sequence, each patching `results` and — if `onUpdate` is passed — calling it immediately rather than only resolving once the whole step-down finishes. Against a slow or rate-limited public RPC that step-down can take several seconds, and a UI that goes silent for that whole span reads as hung:
+
+1. **`getLogs`** — one sanity call over the last ~10 blocks. `'fail'` here stops immediately (a provider that can't make one small `eth_getLogs` call at all can't do wider ones either) and `maxBlockRange` stays `null`.
+2. **`maxBlockRange`** — steps down through `[2_000_000n, 500_000n, 100_000n, 50_000n, 10_000n, 5_000n, 1_000n, 500n, 100n, 10n, 5n, 1n]`, calling `getLogs` at each width until one succeeds. Every failed width's error lands in `logErrors` (so you can see exactly why — e.g. the RPC's real "block range too large" message) even once a narrower width has passed.
+
+Full usage, destructuring everything it returns:
+
+```ts
+const {getLogs, maxBlockRange, logErrors} = await detectRpcCapabilities(
+	provider,
+	'0xYourContractAddress',
+	await provider.getBlockNumber(),
+	(progress) => console.log('probing…', progress), // optional: incremental updates
+);
+
+if (getLogs === 'fail') {
+	throw new Error(`This RPC can't serve eth_getLogs at all: ${logErrors.at(-1)}`);
+}
+
+const blockRangeLimit = maxBlockRange
+	? safeBlockRangeLimit(maxBlockRange) // golden-ratio margin below the detected max
+	: 2_000n; // every candidate width failed — fall back to a conservative default
+```
+
+**Why there's no `eth_newFilter`/`eth_getFilterLogs` check:** [`LogsProvider`](#logsprovider) only ever exposes a stateless `getLogs` — that's the one primitive `chunkedFetchLogs`/`Cursor` actually call, deliberately (see [Adapters](./adapters.mdx#why-an-adapter-at-all)): a filter handle can silently go stale against a round-robin/load-balanced RPC backend if a later call lands on a different node than the one that created it. A one-shot capability probe couldn't detect that failure mode anyway — it's a statefulness bug that only shows up across multiple calls hitting different backend nodes over time, not something a single request can observe. Since this package never calls filter methods in the first place, there's nothing here to gate a decision on even if it could.
+
 ## `createCursor`
 
 ```ts
@@ -151,4 +202,3 @@ A few smaller pieces the above compose, exported (via the `./core/*` subpath) ma
 - **`Span {fromBlock, toBlock}`**, **`mergeSpan(spans, span)`**, **`subtractSpan(spans, span)`**, **`cellStates(spans, floor, tip, blockRangeLimit)`** (`@ethereum-radio/indexer/core/spans`) — the sparse "what's already been scanned" representation `Cursor` is built on. `subtractSpan` is what `checkForReorg` uses to carve an invalidated chunk back out.
 - **`Checkpoint {blockNumber, hash}`**, **`recordCheckpoint`**, **`findCheckpoint`**, **`removeCheckpointsFrom`** (`@ethereum-radio/indexer/core/checkpoints`) — the sparse "last known-canonical hash per block" record `checkForReorg` reads and writes.
 - **`clampFromBlock`**, **`chunkedFetchLogs`**, **`fetchAllLogs`** (`@ethereum-radio/indexer/core/chunked-logs`) — splits a wide range into `blockRangeLimit`-sized `getLogs` calls.
-- **`detectRpcCapabilities`**, **`safeBlockRangeLimit`** (`@ethereum-radio/indexer/core/rpc-doctor`) — probes a `LogsProvider` to find the widest `eth_getLogs` range it actually supports, for when you don't already know a safe `blockRangeLimit` for a given RPC.

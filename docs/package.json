@@ -18,6 +18,7 @@
     "@docusaurus/core": "3.10.2",
     "@docusaurus/faster": "3.10.2",
     "@docusaurus/preset-classic": "3.10.2",
+    "@easyops-cn/docusaurus-search-local": "^0.55.3",
     "@ethereum-radio/indexer": "workspace:*",
     "@mdx-js/react": "^3.0.0",
     "@tanstack/react-query": "^5.101.2",
@@ -33,7 +34,9 @@
     "@docusaurus/module-type-aliases": "3.10.2",
     "@docusaurus/tsconfig": "3.10.2",
     "@docusaurus/types": "3.10.2",
+    "@types/github-slugger": "^2.0.0",
     "@types/react": "^19.0.0",
+    "github-slugger": "^2.0.0",
     "typescript": "~6.0.2"
   },
   "browserslist": {

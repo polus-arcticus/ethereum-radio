@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Usage
 
-This walks through indexing one event filter end to end: pick an adapter, pick a store, then stream matching logs with `createRadio`.
+This walks through indexing one event filter end to end: pick an adapter, pick a `blockRangeLimit`, pick a store, then stream matching logs with `createRadio`.
 
 ## 1. Pick an adapter
 
@@ -29,7 +29,28 @@ const ethersProvider = new JsonRpcProvider('https://your-rpc-url');
 const provider = createEthersAdapter(ethersProvider);
 ```
 
-## 2. Pick a store
+## 2. Pick a `blockRangeLimit`
+
+`blockRangeLimit` caps how wide a single `eth_getLogs` call is allowed to be — set it too high and some RPCs reject the call outright (public endpoints can cap it as low as 5–10 blocks). Rather than guessing a literal, probe the provider once with [`detectRpcCapabilities`](./api/core.mdx#internal-building-blocks):
+
+```ts
+import {detectRpcCapabilities, safeBlockRangeLimit} from '@ethereum-radio/indexer/core/rpc-doctor';
+
+const {maxBlockRange} = await detectRpcCapabilities(
+	provider,
+	'0xYourContractAddress',
+	await provider.getBlockNumber(),
+);
+const blockRangeLimit = maxBlockRange
+	? safeBlockRangeLimit(maxBlockRange)
+	: 2_000n; // fallback if every candidate width failed
+```
+
+`safeBlockRangeLimit` applies a safety margin below the detected max, since the true limit may be approximate rather than a hard cutoff. If you already know a safe value for your RPC (your own node, or a provider's documented limit), skip the probe and just set the constant directly instead: `const blockRangeLimit = 2_000n;`.
+
+Either way, compute it once and reference the `blockRangeLimit` binding everywhere below — every snippet on this page uses that same name rather than repeating a literal.
+
+## 3. Pick a store
 
 A [`SpanStore`](./api/storage.mdx) is where scan progress (which block ranges have already been checked) gets persisted, so the next run doesn't rescan from scratch. Start with the in-memory store; swap in `createLocalStorageStore()` once you want progress to survive a page reload.
 
@@ -45,7 +66,7 @@ import {createLocalStorageStore} from '@ethereum-radio/indexer/storage/local-sto
 const store = createLocalStorageStore(); // backed by window.localStorage
 ```
 
-## 3. Stream logs with `createRadio`
+## 4. Stream logs with `createRadio`
 
 ```ts
 import {createRadio} from '@ethereum-radio/indexer';
@@ -56,7 +77,7 @@ const radio = createRadio({
 	key: 'mainnet:0xYourContract:Transfer', // caller-owned — this package doesn't prescribe a scheme
 	address: '0xYourContractAddress',
 	floorBlock: 18_000_000n, // e.g. the contract's deployment block
-	blockRangeLimit: 5_000n, // how wide a single eth_getLogs call is allowed to be
+	blockRangeLimit, // from step 2
 });
 
 for await (const logs of radio) {
@@ -81,7 +102,7 @@ await radio.fetchForward(); // manually advance an atBlock-anchored forward walk
 
 This is handy for a scan-progress UI (color a grid of cells scanned/unscanned via `getCellStates`) or for driving the backfill on a button click instead of automatically.
 
-## 4. React
+## 5. React
 
 If you're in a React component, `useCursor` wraps the same [`Cursor`](./api/core.mdx#cursor) engine as plain hook state — no `@tanstack/react-query`, just `useState`/`useEffect`:
 
@@ -96,7 +117,7 @@ function TransferFeed() {
 			key: 'mainnet:0xYourContract:Transfer',
 			address: '0xYourContractAddress',
 			floorBlock: 18_000_000n,
-			blockRangeLimit: 5_000n,
+			blockRangeLimit, // from step 2
 			pollIntervalMs: 10_000, // re-sync to the tip on an interval
 		});
 
@@ -122,7 +143,7 @@ const radio = createRadio({
 	// address; topics[2] filters to exactly `name === 'alice'`.
 	topics: [null, null, keccak256(toBytes('alice'))],
 	floorBlock: 18_000_000n,
-	blockRangeLimit: 5_000n,
+	blockRangeLimit, // from step 2
 });
 ```
 
