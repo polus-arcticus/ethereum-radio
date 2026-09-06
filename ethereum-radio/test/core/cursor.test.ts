@@ -1,6 +1,7 @@
 import {before, describe, it} from 'node:test';
 import {expect} from 'earl';
 import {createCursor} from '../../src/core/cursor.ts';
+import type {Checkpoint} from '../../src/core/checkpoints.ts';
 import {createMemoryStore} from '../../src/storage/memory.ts';
 import {createViemAdapter} from '../../src/adapters/viem.ts';
 import {
@@ -11,6 +12,7 @@ import {
 	mineBlocks,
 	readEventFixture,
 	logValue,
+	simulateReorgAtNextBlock,
 } from '../fixtures/chain-environment.ts';
 
 const RANGE = 100n;
@@ -309,5 +311,93 @@ describe('createCursor: scanRange and getCellStates', () => {
 			{fromBlock: floor + 100n, toBlock: floor + 199n, scanned: false},
 			{fromBlock: floor + 200n, toBlock: floor + 299n, scanned: false},
 		]);
+	});
+});
+
+describe('createCursor: checkForReorg', () => {
+	it('establishes a baseline checkpoint when none exists yet, and reports unchecked', async () => {
+		const tip = await getTip();
+		const provider = realProvider();
+		const checkpointStore = createMemoryStore<Checkpoint>();
+		const cursor = createCursor({
+			provider,
+			store: createMemoryStore(),
+			checkpointStore,
+			key: 'k',
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
+			blockRangeLimit: RANGE,
+		});
+
+		expect(await cursor.checkForReorg(tip, tip)).toEqual({status: 'unchecked'});
+
+		const expectedHash = await provider.getBlockHash!(tip);
+		expect(await checkpointStore.load('k')).toEqual([
+			{blockNumber: tip, hash: expectedHash},
+		]);
+	});
+
+	it('reports ok when the recorded hash still matches the chain', async () => {
+		const tip = await getTip();
+		const provider = realProvider();
+		const hash = await provider.getBlockHash!(tip);
+		const checkpointStore = createMemoryStore<Checkpoint>();
+		await checkpointStore.save('k', [{blockNumber: tip, hash}]);
+		const cursor = createCursor({
+			provider,
+			store: createMemoryStore(),
+			checkpointStore,
+			key: 'k',
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
+			blockRangeLimit: RANGE,
+		});
+
+		expect(await cursor.checkForReorg(tip, tip)).toEqual({status: 'ok'});
+	});
+
+	it('detects a mismatch, reindexes the chunk, and refreshes the checkpoint', async () => {
+		const {blockNumber, originalHash, canonicalHash} =
+			await simulateReorgAtNextBlock();
+		const provider = realProvider();
+		const checkpointStore = createMemoryStore<Checkpoint>();
+		await checkpointStore.save('k', [{blockNumber, hash: originalHash}]);
+		const store = createMemoryStore();
+		await store.save('k', [{fromBlock: blockNumber, toBlock: blockNumber}]);
+		const cursor = createCursor({
+			provider,
+			store,
+			checkpointStore,
+			key: 'k',
+			address: EMPTY_ADDRESS,
+			floorBlock: blockNumber - 10n,
+			blockRangeLimit: RANGE,
+		});
+
+		const result = await cursor.checkForReorg(blockNumber, blockNumber);
+		expect(result.status).toEqual('reorged');
+
+		expect(await checkpointStore.load('k')).toEqual([
+			{blockNumber, hash: canonicalHash},
+		]);
+		expect(await cursor.getScannedSpans()).toEqual([
+			{fromBlock: blockNumber, toBlock: blockNumber},
+		]);
+	});
+
+	it('throws when no checkpointStore is configured', async () => {
+		const tip = await getTip();
+		const cursor = createCursor({
+			provider: realProvider(),
+			store: createMemoryStore(),
+			key: 'k',
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
+			blockRangeLimit: RANGE,
+		});
+
+		await expect(cursor.checkForReorg(tip, tip)).toBeRejectedWith(
+			/checkpointStore/,
+		);
 	});
 });

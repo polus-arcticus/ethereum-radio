@@ -51,6 +51,7 @@ interface Cursor {
 	isFullyScanned(): Promise<boolean>;
 	getLiveSpan(): Promise<Span | undefined>;
 	getEarliestSpan(): Promise<Span | undefined>;
+	checkForReorg(fromBlock: bigint, toBlock: bigint): Promise<ReorgCheckResult>;
 }
 ```
 
@@ -60,6 +61,30 @@ interface Cursor {
 - **`fetchForward()`** — only meaningful with `atBlock` configured: extend that anchor's span one window forward, toward the live span. A no-op if no `atBlock` was given, or once the anchored span has merged into the live span.
 - **`getCellStates(tip)`** — every `blockRangeLimit`-sized window between `floorBlock` and `tip`, tagged scanned/unscanned — the data a scan-progress grid renders from.
 - **`isFullyScanned()`** — true once exactly one span covers `floorBlock` through the live tip (an island span that merely touches the floor without having merged into the live span reports `false`).
+- **`checkForReorg(fromBlock, toBlock)`** — a manual, per-chunk reorg check, meant to sit next to a scan-progress grid as a "check for reorgs" action on whatever chunk the user clicks. See [below](#checkforreorg) for how it works and what it requires.
+
+## `checkForReorg`
+
+```ts
+type ReorgCheckResult =
+	| {status: 'unchecked'}
+	| {status: 'ok'}
+	| {status: 'reorged'; logs: RawLog[]};
+```
+
+A mined block's hash commits to every block below it via `parentHash`-chaining, so comparing one block's current hash against a previously recorded one for the same block number is enough to tell whether that block — or anything at or below it — was replaced. `checkForReorg(fromBlock, toBlock)` compares the *current* hash of `toBlock` against whatever was last recorded for it:
+
+- **`'unchecked'`** — no baseline was recorded yet for this chunk (e.g. it was scanned before reorg-checking was wired up). One is established now; there's nothing to report until the next check.
+- **`'ok'`** — the hash still matches. Nothing to do.
+- **`'reorged'`** — the hash changed. The chunk has already been invalidated and reindexed by the time this resolves, and `logs` holds whatever `scanRange(fromBlock, toBlock)` found on the reindex.
+
+This only reindexes the checked chunk itself — it deliberately doesn't cascade to chunks above it, matching a manual per-chunk audit workflow (a button on a scan-map grid) rather than continuous, automatic reorg tracking. If you suspect a deeper reorg, check the chunks above it too.
+
+Requires two things `CursorConfig` doesn't need for anything else:
+- A `provider` whose `getBlockHash` is implemented — both `createViemAdapter` and `createEthersAdapter` provide it (see [Adapters](./adapters.mdx)).
+- A `checkpointStore: Store<Checkpoint[]>` in `CursorConfig` — a plain [`Store`](./storage.mdx), independent of the scan-progress `store`. `createMemoryStore<Checkpoint>()`/`createLocalStorageStore<Checkpoint>()`/`createIndexedDbStore<Checkpoint>()` all work, since every store factory is generic over what it persists.
+
+Calling it without either throws — it's opt-in, not a requirement for every `Cursor`.
 
 ## `createCursor`
 
@@ -78,6 +103,8 @@ interface CursorConfig {
 	blockRangeLimit: bigint;
 	/** Optional forward-scan anchor — enables fetchForward() extending from a known block. */
 	atBlock?: bigint;
+	/** Required for checkForReorg() — where recorded header hashes persist. */
+	checkpointStore?: Store<Checkpoint[]>;
 }
 ```
 
@@ -91,6 +118,8 @@ No caching between calls — every method re-reads the store fresh rather than t
 interface LogsProvider {
 	getBlockNumber(): Promise<bigint>;
 	getLogs(params: GetLogsParams): Promise<RawLog[]>;
+	/** Optional — required only for checkForReorg(). Both shipped adapters implement it. */
+	getBlockHash?(blockNumber: bigint): Promise<string>;
 }
 
 interface GetLogsParams {
@@ -119,6 +148,7 @@ The minimal client-agnostic surface everything in this package is built on. See 
 
 A few smaller pieces the above compose, exported (via the `./core/*` subpath) mainly so their pure logic is independently testable — most consumers won't reach for these directly:
 
-- **`Span {fromBlock, toBlock}`**, **`mergeSpan(spans, span)`**, **`cellStates(spans, floor, tip, blockRangeLimit)`** (`@ethereum-radio/indexer/core/spans`) — the sparse "what's already been scanned" representation `Cursor` is built on.
+- **`Span {fromBlock, toBlock}`**, **`mergeSpan(spans, span)`**, **`subtractSpan(spans, span)`**, **`cellStates(spans, floor, tip, blockRangeLimit)`** (`@ethereum-radio/indexer/core/spans`) — the sparse "what's already been scanned" representation `Cursor` is built on. `subtractSpan` is what `checkForReorg` uses to carve an invalidated chunk back out.
+- **`Checkpoint {blockNumber, hash}`**, **`recordCheckpoint`**, **`findCheckpoint`**, **`removeCheckpointsFrom`** (`@ethereum-radio/indexer/core/checkpoints`) — the sparse "last known-canonical hash per block" record `checkForReorg` reads and writes.
 - **`clampFromBlock`**, **`chunkedFetchLogs`**, **`fetchAllLogs`** (`@ethereum-radio/indexer/core/chunked-logs`) — splits a wide range into `blockRangeLimit`-sized `getLogs` calls.
 - **`detectRpcCapabilities`**, **`safeBlockRangeLimit`** (`@ethereum-radio/indexer/core/rpc-doctor`) — probes a `LogsProvider` to find the widest `eth_getLogs` range it actually supports, for when you don't already know a safe `blockRangeLimit` for a given RPC.

@@ -4,44 +4,58 @@ sidebar_position: 3
 
 # Storage
 
-A `SpanStore` is where scan progress persists. The interface is deliberately tiny (OrbitDB-style: one small async contract, swappable backend modules) so writing your own — an IndexedDB store, a cookie store, whatever fits your app — is a handful of lines with no changes needed anywhere else.
+A `Store<T>` is where data persists — scan progress (`Span[]`, aliased as `SpanStore`) by default, but also reorg-check baselines (`Checkpoint[]`) or anything else shaped like an array of records. The interface is deliberately tiny (OrbitDB-style: one small async contract, swappable backend modules) so writing your own — a cookie store, whatever fits your app — is a handful of lines with no changes needed anywhere else.
 
-## `SpanStore`
+## `Store<T>` / `SpanStore`
 
 ```ts
-import type {SpanStore} from '@ethereum-radio/indexer';
+import type {Store, SpanStore} from '@ethereum-radio/indexer';
 
-interface SpanStore {
-	load(key: string): Promise<Span[] | undefined>;
-	save(key: string, spans: Span[]): Promise<void>;
+interface Store<T> {
+	load(key: string): Promise<T | undefined>;
+	save(key: string, value: T): Promise<void>;
 	clear?(key: string): Promise<void>;
 }
+
+type SpanStore = Store<Span[]>;
 ```
 
-`key` is entirely caller-owned (e.g. `` `${chainId}:${address}:${topic0}` ``) — this package doesn't prescribe a keying scheme, so you're free to namespace by chain, contract, filter, or however else makes sense for your app.
+`key` is entirely caller-owned (e.g. `` `${chainId}:${address}:${topic0}` ``) — this package doesn't prescribe a keying scheme, so you're free to namespace by chain, contract, filter, or however else makes sense for your app. `SpanStore` is what `CursorConfig.store` takes; `CursorConfig.checkpointStore` (for [`checkForReorg`](./core.mdx#checkforreorg)) takes a `Store<Checkpoint[]>` instead — every factory below is generic, so the same one backs both.
 
 ## `createMemoryStore`
 
 ```ts
 import {createMemoryStore} from '@ethereum-radio/indexer/storage/memory';
 
-function createMemoryStore(): SpanStore;
+function createMemoryStore<E = Span>(): Store<E[]>;
 ```
 
-`Map`-based, no dependency beyond the language itself. The default choice for tests, SSR, Node scripts, or anywhere progress doesn't need to outlive the process. Defensive copies on load/save mean mutating a returned array can't corrupt the store's internal state.
+`Map`-based, no dependency beyond the language itself. The default choice for tests, SSR, Node scripts, or anywhere progress doesn't need to outlive the process. Defensive copies on load/save mean mutating a returned array can't corrupt the store's internal state. `createMemoryStore()` (no type argument) is a `SpanStore`; `createMemoryStore<Checkpoint>()` is a checkpoint store.
 
 ## `createLocalStorageStore`
 
 ```ts
 import {createLocalStorageStore} from '@ethereum-radio/indexer/storage/local-storage';
 
-function createLocalStorageStore(prefix?: string): SpanStore;
+function createLocalStorageStore<T = Span[]>(prefix?: string): Store<T>;
 ```
 
 Backed by the browser's `localStorage` global — nothing else required. `prefix` (default `'ethereum-radio:spans:'`) namespaces keys so multiple stores in the same origin don't collide.
 
-`JSON` can't represent `bigint` natively, so bigint values (`Span.fromBlock`/`.toBlock`) are round-tripped as `"123n"`-suffixed strings under the hood — transparent to callers, but worth knowing if you ever inspect the raw `localStorage` value directly.
+`JSON` can't represent `bigint` natively, so bigint values (`Span.fromBlock`/`.toBlock`, or a `Checkpoint.blockNumber`) are round-tripped as `"123n"`-suffixed strings under the hood — transparent to callers, but worth knowing if you ever inspect the raw `localStorage` value directly.
+
+## `createIndexedDbStore`
+
+```ts
+import {createIndexedDbStore} from '@ethereum-radio/indexer/storage/indexeddb';
+
+function createIndexedDbStore<T = Span[]>(dbName?: string): Store<T>;
+```
+
+Backed by the browser's `indexedDB` global. `dbName` (default `'ethereum-radio:spans'`) namespaces the database so multiple stores in the same origin don't collide. The database is opened lazily on first `load`/`save`/`clear` call, not at construction time, so creating this store has no effect in SSR or Node contexts where `indexedDB` doesn't exist.
+
+Unlike `createLocalStorageStore`, no bigint round-tripping is needed — IndexedDB's structured-clone algorithm supports `bigint` natively, so values are stored as-is.
 
 ## Writing your own
 
-An IndexedDB or cookie-based store fits the same three-method interface without any change to `Cursor`, `createRadio`, or anything else in this package — an IndexedDB store, for instance, is just an async `get`/`put` wrapped to match `SpanStore`'s shape.
+A cookie-based store fits the same three-method interface without any change to `Cursor`, `createRadio`, or anything else in this package.

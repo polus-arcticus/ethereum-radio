@@ -13,6 +13,11 @@ import type {GetLogsParams, LogsProvider, RawLog} from './types.ts';
 // internally before it hands off to ABI decoding.
 export const createViemAdapter = (client: PublicClient): LogsProvider => ({
 	getBlockNumber: () => client.getBlockNumber(),
+	getBlockHash: async (blockNumber: bigint) => {
+		const block = await client.getBlock({blockNumber});
+		if (!block.hash) throw new Error(`Block ${blockNumber} has no hash yet`);
+		return block.hash;
+	},
 	getLogs: async (params: GetLogsParams): Promise<RawLog[]> => {
 		const logs = await client.request({
 			method: 'eth_getLogs',

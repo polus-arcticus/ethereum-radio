@@ -20,6 +20,8 @@ viem's typed `getLogs` action only supports ABI event-based filtering (`event`/`
 
 **Gotcha:** without an explicit `chain` config, viem's `getBlockNumber()` defaults to a 4-second `cacheTime` — fine for typical polling, but if you're driving `createRadio`/`radio()` with a short `pollIntervalMs`, the client can keep returning a stale cached tip for up to 4 real seconds after a new block lands. Pass `cacheTime: 0` (or a `chain` config with an accurate block time) to `createPublicClient` if you want fast polling to actually see new blocks promptly.
 
+Also implements `getBlockHash` (via `client.getBlock({blockNumber})`), needed for [`Cursor.checkForReorg`](./core.mdx#checkforreorg).
+
 ## `createEthersAdapter`
 
 ```ts
@@ -31,6 +33,8 @@ function createEthersAdapter(provider: Provider): LogsProvider;
 Requires `ethers` (optional peer dependency — see [Installation](../installation.mdx)).
 
 Normalizes the two places ethers v6's shape differs from viem's: `provider.getBlockNumber()` returns a plain `number` (wrapped in `BigInt(...)` here), and a log's index field is named `index` rather than `logIndex`.
+
+Also implements `getBlockHash` (via `provider.getBlock(blockNumber)`), needed for [`Cursor.checkForReorg`](./core.mdx#checkforreorg).
 
 ## Why an adapter at all?
 

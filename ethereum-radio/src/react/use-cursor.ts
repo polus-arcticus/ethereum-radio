@@ -1,8 +1,9 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {GetLogsParams, LogsProvider, RawLog} from '../adapters/types.ts';
-import {createCursor} from '../core/cursor.ts';
+import {createCursor, type ReorgCheckResult} from '../core/cursor.ts';
+import type {Checkpoint} from '../core/checkpoints.ts';
 import type {Cell, Span} from '../core/spans.ts';
-import type {SpanStore} from '../storage/types.ts';
+import type {SpanStore, Store} from '../storage/types.ts';
 
 export interface UseCursorArgs {
 	provider: LogsProvider;
@@ -18,6 +19,8 @@ export interface UseCursorArgs {
 	atBlock?: bigint;
 	/** If set, re-runs the tip-tailing sync on this interval (ms). Default: no polling. */
 	pollIntervalMs?: number;
+	/** Required for checkForReorg() — see CursorConfig. */
+	checkpointStore?: Store<Checkpoint[]>;
 }
 
 export interface UseCursorResult {
@@ -30,6 +33,7 @@ export interface UseCursorResult {
 	scanRange: (fromBlock: bigint, toBlock: bigint) => Promise<RawLog[]>;
 	fetchHistory: () => Promise<RawLog[]>;
 	fetchForward: () => Promise<RawLog[]>;
+	checkForReorg: (fromBlock: bigint, toBlock: bigint) => Promise<ReorgCheckResult | undefined>;
 	refresh: () => Promise<void>;
 }
 
@@ -54,6 +58,7 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 	const topicsKey = JSON.stringify(args.topics ?? null);
 	const addressKey = JSON.stringify(address);
 
+	const {checkpointStore} = args;
 	const cursor = useMemo(
 		() =>
 			createCursor({
@@ -65,6 +70,7 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 				floorBlock,
 				blockRangeLimit,
 				atBlock,
+				checkpointStore,
 			}),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 		[
@@ -76,6 +82,7 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 			floorBlock,
 			blockRangeLimit,
 			atBlock,
+			checkpointStore,
 		],
 	);
 
@@ -97,17 +104,17 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 	}, [cursor]);
 
 	const run = useCallback(
-		async (action: () => Promise<RawLog[]>): Promise<RawLog[]> => {
+		async <T,>(action: () => Promise<T>, fallback: T): Promise<T> => {
 			setIsLoading(true);
 			setError(undefined);
 			try {
-				const logs = await action();
+				const result = await action();
 				await refreshState();
-				return logs;
+				return result;
 			} catch (e) {
 				if (mountedRef.current)
 					setError(e instanceof Error ? e : new Error(String(e)));
-				return [];
+				return fallback;
 			} finally {
 				if (mountedRef.current) setIsLoading(false);
 			}
@@ -118,20 +125,28 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 	const refresh = useCallback(async () => {
 		const newTip = await provider.getBlockNumber();
 		if (mountedRef.current) setTip(newTip);
-		await run(() => cursor.sync());
+		await run(() => cursor.sync(), []);
 	}, [provider, cursor, run]);
 
 	const scanRange = useCallback(
 		(fromBlock: bigint, toBlock: bigint) =>
-			run(() => cursor.scanRange(fromBlock, toBlock)),
+			run(() => cursor.scanRange(fromBlock, toBlock), []),
 		[run, cursor],
 	);
 	const fetchHistory = useCallback(
-		() => run(() => cursor.fetchHistory()),
+		() => run(() => cursor.fetchHistory(), []),
 		[run, cursor],
 	);
 	const fetchForward = useCallback(
-		() => run(() => cursor.fetchForward()),
+		() => run(() => cursor.fetchForward(), []),
+		[run, cursor],
+	);
+	// Resolves to undefined (rather than throwing into the caller) on error,
+	// same as the other actions here — check `error` for details. Requires
+	// `checkpointStore` in UseCursorArgs; see Cursor.checkForReorg().
+	const checkForReorg = useCallback(
+		(fromBlock: bigint, toBlock: bigint) =>
+			run(() => cursor.checkForReorg(fromBlock, toBlock), undefined),
 		[run, cursor],
 	);
 
@@ -178,6 +193,7 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 		scanRange,
 		fetchHistory,
 		fetchForward,
+		checkForReorg,
 		refresh,
 	};
 };

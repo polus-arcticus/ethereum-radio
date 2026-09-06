@@ -31,6 +31,8 @@ interface UseCursorArgs {
 	atBlock?: bigint;
 	/** If set, re-runs the tip-tailing sync on this interval (ms). Default: no polling. */
 	pollIntervalMs?: number;
+	/** Required for checkForReorg() — see CursorConfig. */
+	checkpointStore?: Store<Checkpoint[]>;
 }
 ```
 
@@ -49,6 +51,7 @@ interface UseCursorResult {
 	scanRange: (fromBlock: bigint, toBlock: bigint) => Promise<RawLog[]>;
 	fetchHistory: () => Promise<RawLog[]>;
 	fetchForward: () => Promise<RawLog[]>;
+	checkForReorg: (fromBlock: bigint, toBlock: bigint) => Promise<ReorgCheckResult | undefined>;
 	refresh: () => Promise<void>;
 }
 ```
@@ -56,3 +59,5 @@ interface UseCursorResult {
 On mount (and whenever the cursor's identity changes — a different `key`/`address`/`topics`), the hook runs an initial tip-tailing `sync()` automatically. If `pollIntervalMs` is set, it repeats that sync on an interval — a simple, adapter-agnostic substitute for a live push subscription, since a real push subscription would need a watch-capable provider (which viem and ethers support differently), out of scope for this package's framework-agnostic core.
 
 `scanRange`/`fetchHistory`/`fetchForward` are the same operations as on a [`Cursor`](../api/core.mdx#cursor), wired to update `scannedSpans`/`isLoading`/`error` as they run. There's no equivalent of `createRadio`'s `for await` stream exposed here — this hook is for driving the cursor imperatively from component code (a "load more history" button, a scan-progress grid from `cellStates`); reach for `createRadio` directly (e.g. inside a `useEffect`) if you want the push-style stream inside a component instead.
+
+`checkForReorg` is the same operation as [`Cursor.checkForReorg`](../api/core.mdx#checkforreorg) — wired the same way, resolving to `undefined` (with `error` set) rather than throwing if `checkpointStore` wasn't provided or the provider lacks `getBlockHash`. This is the one to wire a scan-map grid's "check for reorgs" button to.

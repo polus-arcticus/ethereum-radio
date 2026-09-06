@@ -64,6 +64,7 @@
 		"@types/react": "^19.2.14",
 		"earl": "^2.0.0",
 		"ethers": "^6.13.0",
+		"fake-indexeddb": "^6.2.5",
 		"happy-dom": "^15.11.7",
 		"helia": "^7.1.10",
 		"multiformats": "^14.0.5",

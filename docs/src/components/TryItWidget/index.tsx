@@ -10,10 +10,13 @@ import {
 	useSwitchChain,
 } from 'wagmi';
 import {isAddress, isHex, keccak256, toBytes, type Hex, type PublicClient} from 'viem';
-import {createRadio, type RawLog} from '@ethereum-radio/indexer';
+import {createRadio, type RawLog, type ReorgCheckResult} from '@ethereum-radio/indexer';
 import {createViemAdapter} from '@ethereum-radio/indexer/adapters/viem';
 import {createMemoryStore} from '@ethereum-radio/indexer/storage/memory';
+import type {Cell} from '@ethereum-radio/indexer/core/spans';
+import type {Checkpoint} from '@ethereum-radio/indexer/core/checkpoints';
 import {wagmiConfig} from '../../lib/wagmi';
+import ScanMapGrid from './ScanMapGrid';
 import styles from './styles.module.css';
 
 const queryClient = new QueryClient();
@@ -178,12 +181,17 @@ function ResultsPanel({address, topics, floorBlock, publicClient}: ScanConfig & 
 	const [logs, setLogs] = useState<RawLog[]>([]);
 	const [fullyScanned, setFullyScanned] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
+	const [cells, setCells] = useState<Cell[]>([]);
+	const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
+	const [reorgResult, setReorgResult] = useState<ReorgCheckResult | null>(null);
+	const [reorgChecking, setReorgChecking] = useState(false);
 
 	const radio = useMemo(
 		() =>
 			createRadio({
 				provider: createViemAdapter(publicClient),
 				store: createMemoryStore(),
+				checkpointStore: createMemoryStore<Checkpoint>(),
 				key: `${address}:${topics.join(',')}:${floorBlock}`,
 				address,
 				topics,
@@ -198,14 +206,20 @@ function ResultsPanel({address, topics, floorBlock, publicClient}: ScanConfig & 
 		setLogs([]);
 		setFullyScanned(false);
 		setError(null);
+		setCells([]);
+		setSelectedCell(null);
+		setReorgResult(null);
 		const controller = new AbortController();
 
 		// radio only yields non-empty chunks, so a scan with zero matches would
-		// never update `fullyScanned` via the loop below alone — poll it
-		// separately (a cheap, store-only read, no network call) so the status
-		// line stays accurate even when nothing's been found yet.
+		// never update `fullyScanned`/the scan-map grid via the loop below alone
+		// — poll them separately (cheap, store-only reads plus one tip lookup)
+		// so the status line and grid stay accurate even when nothing's found.
 		const statusInterval = setInterval(() => {
-			void radio.isFullyScanned().then(setFullyScanned);
+			void publicClient.getBlockNumber().then(async (tip) => {
+				setFullyScanned(await radio.isFullyScanned());
+				setCells(await radio.getCellStates(tip));
+			});
 		}, 1_000);
 
 		(async () => {
@@ -226,7 +240,21 @@ function ResultsPanel({address, topics, floorBlock, publicClient}: ScanConfig & 
 			controller.abort();
 			clearInterval(statusInterval);
 		};
-	}, [radio]);
+	}, [radio, publicClient]);
+
+	const onCheckForReorg = async () => {
+		if (!selectedCell) return;
+		setReorgChecking(true);
+		setReorgResult(null);
+		try {
+			const result = await radio.checkForReorg(selectedCell.fromBlock, selectedCell.toBlock);
+			setReorgResult(result);
+		} catch (e) {
+			setError(e instanceof Error ? e : new Error(String(e)));
+		} finally {
+			setReorgChecking(false);
+		}
+	};
 
 	return (
 		<div className={styles.results}>
@@ -245,6 +273,34 @@ function ResultsPanel({address, topics, floorBlock, publicClient}: ScanConfig & 
 					</li>
 				))}
 			</ul>
+
+			<div className={styles.scanMap}>
+				<div className={styles.scanMapHeader}>
+					<strong>Scan map</strong>
+					<span className={styles.reorgStatus}>
+						{selectedCell
+							? `chunk ${selectedCell.fromBlock}–${selectedCell.toBlock} selected`
+							: 'click a chunk to select it'}
+					</span>
+				</div>
+				<ScanMapGrid cells={cells} selected={selectedCell} onSelect={setSelectedCell} />
+				<div className={styles.reorgRow}>
+					<button
+						type="button"
+						className="button button--secondary button--sm"
+						disabled={!selectedCell || reorgChecking}
+						onClick={onCheckForReorg}>
+						{reorgChecking ? 'Checking…' : 'Check for reorgs'}
+					</button>
+					<span className={styles.reorgStatus}>
+						{reorgResult?.status === 'unchecked' &&
+							'No baseline recorded yet — one has been established for next time.'}
+						{reorgResult?.status === 'ok' && 'No reorg — header hash still matches.'}
+						{reorgResult?.status === 'reorged' &&
+							`Reorg detected — chunk reindexed, ${reorgResult.logs.length} log(s) found on rescan.`}
+					</span>
+				</div>
+			</div>
 		</div>
 	);
 }

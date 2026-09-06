@@ -1,14 +1,21 @@
 import type {GetLogsParams, LogsProvider, RawLog} from '../adapters/types.ts';
-import type {SpanStore} from '../storage/types.ts';
+import type {SpanStore, Store} from '../storage/types.ts';
 import {
 	cellStates,
 	earliestSpan,
 	liveSpan,
 	mergeSpan,
 	spanNear,
+	subtractSpan,
 	type Cell,
 	type Span,
 } from './spans.ts';
+import {
+	findCheckpoint,
+	recordCheckpoint,
+	removeCheckpointsFrom,
+	type Checkpoint,
+} from './checkpoints.ts';
 import {chunkedFetchLogs, clampFromBlock} from './chunked-logs.ts';
 
 export interface CursorConfig {
@@ -23,7 +30,19 @@ export interface CursorConfig {
 	blockRangeLimit: bigint;
 	/** Optional forward-scan anchor — enables fetchForward()/sync() extending from a known block. */
 	atBlock?: bigint;
+	/** Required for checkForReorg() — where recorded header hashes persist. Independent of `store`; a plain Store<Checkpoint[]> (e.g. createMemoryStore<Checkpoint[]>()). */
+	checkpointStore?: Store<Checkpoint[]>;
 }
+
+// The result of Cursor.checkForReorg(): 'unchecked' means no baseline hash
+// was recorded yet for that chunk's top block (one is established now, for a
+// future check to compare against — nothing to report yet); 'ok' means the
+// hash still matches; 'reorged' means it didn't, and the chunk has already
+// been reindexed by the time this resolves.
+export type ReorgCheckResult =
+	| {status: 'unchecked'}
+	| {status: 'ok'}
+	| {status: 'reorged'; logs: RawLog[]};
 
 export interface Cursor {
 	scanRange(fromBlock: bigint, toBlock: bigint): Promise<RawLog[]>;
@@ -38,6 +57,16 @@ export interface Cursor {
 	isFullyScanned(): Promise<boolean>;
 	getLiveSpan(): Promise<Span | undefined>;
 	getEarliestSpan(): Promise<Span | undefined>;
+	/**
+	 * Compares the chunk's top block's current hash against a previously
+	 * recorded one (parentHash-chaining means that single comparison covers
+	 * everything at or below `toBlock`), and reindexes the chunk on a
+	 * mismatch. Requires `checkpointStore` in CursorConfig and a provider
+	 * implementing `getBlockHash`. Only reindexes the checked chunk itself —
+	 * if the reorg's fork point is inside it, a chunk above it may also need
+	 * checking; this doesn't cascade automatically.
+	 */
+	checkForReorg(fromBlock: bigint, toBlock: bigint): Promise<ReorgCheckResult>;
 }
 
 const min = (...values: bigint[]): bigint =>
@@ -63,6 +92,7 @@ export const createCursor = (config: CursorConfig): Cursor => {
 		floorBlock,
 		blockRangeLimit,
 		atBlock,
+		checkpointStore,
 	} = config;
 
 	const loadSpans = async (): Promise<Span[]> => (await store.load(key)) ?? [];
@@ -141,6 +171,52 @@ export const createCursor = (config: CursorConfig): Cursor => {
 	const getLiveSpan = async () => liveSpan(await loadSpans());
 	const getEarliestSpan = async () => earliestSpan(await loadSpans());
 
+	const checkForReorg = async (
+		fromBlock: bigint,
+		toBlock: bigint,
+	): Promise<ReorgCheckResult> => {
+		if (!provider.getBlockHash) {
+			throw new Error(
+				'checkForReorg requires a LogsProvider that implements getBlockHash',
+			);
+		}
+		if (!checkpointStore) {
+			throw new Error(
+				'checkForReorg requires a checkpointStore in CursorConfig',
+			);
+		}
+
+		const checkpoints = (await checkpointStore.load(key)) ?? [];
+		const recorded = findCheckpoint(checkpoints, toBlock);
+		const currentHash = await provider.getBlockHash(toBlock);
+
+		if (!recorded) {
+			// No baseline yet (e.g. this chunk was scanned before reorg-checking
+			// was wired up) — establish one now for a future check to compare.
+			await checkpointStore.save(
+				key,
+				recordCheckpoint(checkpoints, {blockNumber: toBlock, hash: currentHash}),
+			);
+			return {status: 'unchecked'};
+		}
+
+		if (recorded.hash === currentHash) return {status: 'ok'};
+
+		// Reorged: invalidate and reindex this chunk. A chunk above it may also
+		// need its own check if the fork point reaches that far — this doesn't
+		// cascade automatically.
+		const spans = await loadSpans();
+		await store.save(key, subtractSpan(spans, {fromBlock, toBlock}));
+		await checkpointStore.save(key, removeCheckpointsFrom(checkpoints, fromBlock));
+		const logs = await scanRange(fromBlock, toBlock);
+		const refreshed = (await checkpointStore.load(key)) ?? [];
+		await checkpointStore.save(
+			key,
+			recordCheckpoint(refreshed, {blockNumber: toBlock, hash: currentHash}),
+		);
+		return {status: 'reorged', logs};
+	};
+
 	return {
 		scanRange,
 		sync,
@@ -151,5 +227,6 @@ export const createCursor = (config: CursorConfig): Cursor => {
 		isFullyScanned,
 		getLiveSpan,
 		getEarliestSpan,
+		checkForReorg,
 	};
 };

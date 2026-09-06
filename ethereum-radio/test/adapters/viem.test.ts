@@ -33,6 +33,14 @@ describe('createViemAdapter (real Anvil)', () => {
 		);
 	});
 
+	it('fetches a real block hash by number', async () => {
+		const {publicClient} = createViemTestClients();
+		const adapter = createViemAdapter(publicClient);
+		const tip = await adapter.getBlockNumber();
+		const expected = await publicClient.getBlock({blockNumber: tip});
+		expect(await adapter.getBlockHash!(tip)).toEqual(expected.hash);
+	});
+
 	it('fetches a real log and normalizes it into RawLog', async () => {
 		const fixture = readEventFixture();
 		const {publicClient} = createViemTestClients();

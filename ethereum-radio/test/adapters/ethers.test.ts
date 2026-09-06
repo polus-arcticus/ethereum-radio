@@ -32,6 +32,14 @@ describe('createEthersAdapter (real Anvil)', () => {
 		expect(tip).toEqual(BigInt(await provider.getBlockNumber()));
 	});
 
+	it('fetches a real block hash by number', async () => {
+		const {provider} = createEthersTestSigner();
+		const adapter = createEthersAdapter(provider);
+		const tip = await adapter.getBlockNumber();
+		const expected = await provider.getBlock(Number(tip));
+		expect(await adapter.getBlockHash!(tip)).toEqual(expected!.hash);
+	});
+
 	it('fetches a real log and normalizes it into RawLog', async () => {
 		const fixture = readEventFixture();
 		const {provider} = createEthersTestSigner();

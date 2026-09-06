@@ -4,9 +4,10 @@
 // consumer might not have installed. Use the dedicated subpath exports
 // instead (./adapters/viem, ./adapters/ethers, ./storage/*, ./react).
 export * from './core/spans.ts';
+export * from './core/checkpoints.ts';
 export * from './core/chunked-logs.ts';
 export * from './core/rpc-doctor.ts';
 export * from './core/cursor.ts';
 export * from './core/radio.ts';
 export type {LogsProvider, RawLog, GetLogsParams} from './adapters/types.ts';
-export type {SpanStore} from './storage/types.ts';
+export type {SpanStore, Store} from './storage/types.ts';

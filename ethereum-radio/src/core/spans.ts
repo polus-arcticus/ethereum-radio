@@ -52,6 +52,29 @@ export const earliestSpan = (spans: Span[]): Span | undefined =>
 		? spans.reduce((a, b) => (b.fromBlock < a.fromBlock ? b : a))
 		: undefined;
 
+// Remove a sub-range from the scanned spans, splitting any span it cuts
+// through into up to two remaining pieces. Used when a reorg check finds a
+// chunk's recorded header hash no longer matches the chain — that chunk
+// needs to look unscanned again so a subsequent scan re-fetches it.
+export const subtractSpan = (spans: Span[], remove: Span): Span[] => {
+	const result: Span[] = [];
+	for (const existing of spans) {
+		const disjoint =
+			existing.toBlock < remove.fromBlock || existing.fromBlock > remove.toBlock;
+		if (disjoint) {
+			result.push(existing);
+			continue;
+		}
+		if (existing.fromBlock < remove.fromBlock) {
+			result.push({fromBlock: existing.fromBlock, toBlock: remove.fromBlock - 1n});
+		}
+		if (existing.toBlock > remove.toBlock) {
+			result.push({fromBlock: remove.toBlock + 1n, toBlock: existing.toBlock});
+		}
+	}
+	return result.sort(byFromBlock);
+};
+
 // The span that already covers a given block, if any. Used to find (or know
 // we must create) the span an atBlock-seeded forward walk should extend, and
 // to answer "has that walk already merged into the live span?"

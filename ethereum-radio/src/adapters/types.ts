@@ -30,4 +30,6 @@ export interface GetLogsParams {
 export interface LogsProvider {
 	getBlockNumber(): Promise<bigint>;
 	getLogs(params: GetLogsParams): Promise<RawLog[]>;
+	/** Optional: a block's hash by number, for Cursor.checkForReorg(). Both shipped adapters implement it. */
+	getBlockHash?(blockNumber: bigint): Promise<string>;
 }

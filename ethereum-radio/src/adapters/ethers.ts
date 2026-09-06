@@ -7,6 +7,11 @@ import type {GetLogsParams, LogsProvider, RawLog} from './types.ts';
 // `index` rather than `logIndex`.
 export const createEthersAdapter = (provider: Provider): LogsProvider => ({
 	getBlockNumber: async () => BigInt(await provider.getBlockNumber()),
+	getBlockHash: async (blockNumber: bigint) => {
+		const block = await provider.getBlock(Number(blockNumber));
+		if (!block?.hash) throw new Error(`Block ${blockNumber} not found`);
+		return block.hash;
+	},
 	getLogs: async (params: GetLogsParams): Promise<RawLog[]> => {
 		const logs = await provider.getLogs({
 			address: params.address as any,

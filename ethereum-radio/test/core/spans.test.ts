@@ -6,6 +6,7 @@ import {
 	earliestSpan,
 	spanNear,
 	cellStates,
+	subtractSpan,
 } from '../../src/core/spans.ts';
 
 describe('mergeSpan', () => {
@@ -132,5 +133,51 @@ describe('cellStates', () => {
 
 	it('returns an empty list when tip is before floor', () => {
 		expect(cellStates([], 200n, 100n, 10n)).toEqual([]);
+	});
+});
+
+describe('subtractSpan', () => {
+	it('removes a span that exactly matches an existing one', () => {
+		const result = subtractSpan([{fromBlock: 100n, toBlock: 200n}], {
+			fromBlock: 100n,
+			toBlock: 200n,
+		});
+		expect(result).toEqual([]);
+	});
+
+	it('splits a span that fully contains the removed range in two', () => {
+		const result = subtractSpan([{fromBlock: 100n, toBlock: 300n}], {
+			fromBlock: 150n,
+			toBlock: 199n,
+		});
+		expect(result).toEqual([
+			{fromBlock: 100n, toBlock: 149n},
+			{fromBlock: 200n, toBlock: 300n},
+		]);
+	});
+
+	it('trims the front of a span when the removed range overlaps its start', () => {
+		const result = subtractSpan([{fromBlock: 100n, toBlock: 300n}], {
+			fromBlock: 50n,
+			toBlock: 199n,
+		});
+		expect(result).toEqual([{fromBlock: 200n, toBlock: 300n}]);
+	});
+
+	it('trims the tail of a span when the removed range overlaps its end', () => {
+		const result = subtractSpan([{fromBlock: 100n, toBlock: 300n}], {
+			fromBlock: 200n,
+			toBlock: 400n,
+		});
+		expect(result).toEqual([{fromBlock: 100n, toBlock: 199n}]);
+	});
+
+	it('leaves disjoint spans untouched', () => {
+		const spans = [
+			{fromBlock: 100n, toBlock: 200n},
+			{fromBlock: 500n, toBlock: 600n},
+		];
+		const result = subtractSpan(spans, {fromBlock: 300n, toBlock: 400n});
+		expect(result).toEqual(spans);
 	});
 });

@@ -151,6 +151,39 @@ export const logCombo = async (value: bigint, name: string) => {
 	return waitForWrite(hash);
 };
 
+// Simulates a reorg at the current tip: snapshots the chain, mines a block
+// containing `logValue(distinguishingValueA)` (the "original" block, whose
+// hash is recorded), reverts the snapshot (as if that block never happened),
+// then mines a different block at the SAME height via
+// `logValue(distinguishingValueB)` (the "canonical" replacement). Returns
+// both hashes at that one block number — exactly what checkForReorg needs to
+// tell apart. Net tip afterwards is unchanged (still one block past whatever
+// it was before this ran), so it's safe to call from a test file that shares
+// the never-reset chain with others.
+export const simulateReorgAtNextBlock = async (): Promise<{
+	blockNumber: bigint;
+	originalHash: `0x${string}`;
+	canonicalHash: `0x${string}`;
+}> => {
+	const {publicClient} = createViemTestClients();
+	const snapshotId = await publicClient.request({
+		method: 'evm_snapshot',
+		params: [],
+	} as Parameters<typeof publicClient.request>[0]);
+
+	const originalReceipt = await logValue(BigInt(Date.now()));
+	const blockNumber = originalReceipt.blockNumber;
+	const originalHash = originalReceipt.blockHash;
+
+	await publicClient.request({
+		method: 'evm_revert',
+		params: [snapshotId],
+	} as Parameters<typeof publicClient.request>[0]);
+
+	const canonicalReceipt = await logValue(BigInt(Date.now()) + 1n);
+	return {blockNumber, originalHash, canonicalHash: canonicalReceipt.blockHash};
+};
+
 export interface RecordingProvider extends LogsProvider {
 	calls: GetLogsParams[];
 }

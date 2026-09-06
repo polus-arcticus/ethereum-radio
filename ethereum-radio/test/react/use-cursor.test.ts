@@ -2,6 +2,7 @@ import {before, describe, it} from 'node:test';
 import {expect} from 'earl';
 import {renderHook} from './harness.ts';
 import {useCursor, type UseCursorArgs} from '../../src/react/use-cursor.ts';
+import type {Checkpoint} from '../../src/core/checkpoints.ts';
 import {createMemoryStore} from '../../src/storage/memory.ts';
 import {createViemAdapter} from '../../src/adapters/viem.ts';
 import {
@@ -112,5 +113,26 @@ describe('useCursor (real Anvil)', () => {
 
 		expect(harness.result.error instanceof Error).toEqual(true);
 		expect(harness.result.isLoading).toEqual(false);
+	});
+
+	it('checkForReorg establishes a baseline and updates state', async () => {
+		const tip = await getTip();
+		const provider = realProvider();
+		const args: UseCursorArgs = {
+			provider,
+			store: createMemoryStore(),
+			checkpointStore: createMemoryStore<Checkpoint>(),
+			key: 'k',
+			address: EMPTY_ADDRESS,
+			floorBlock: tip - 300n,
+			blockRangeLimit: RANGE,
+		};
+
+		const harness = await renderHook(useCursor, args);
+		await harness.flush();
+		const result = await harness.act(() => harness.result.checkForReorg(tip, tip));
+
+		expect(result).toEqual({status: 'unchecked'});
+		expect(harness.result.error).toEqual(undefined);
 	});
 });

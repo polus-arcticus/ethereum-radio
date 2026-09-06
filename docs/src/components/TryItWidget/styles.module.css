@@ -47,3 +47,57 @@
 	font-family: var(--ifm-font-family-monospace);
 	font-size: 0.85rem;
 }
+
+.scanMap {
+	margin-top: 1.5rem;
+	padding-top: 1rem;
+	border-top: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.scanMapHeader {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	margin-bottom: 0.75rem;
+}
+
+.grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.cell {
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border-radius: 4px;
+	border: 1px solid var(--ifm-color-emphasis-400);
+	background: transparent;
+	cursor: pointer;
+}
+
+.cellScanned {
+	background: var(--ifm-color-primary-lightest);
+	border-color: var(--ifm-color-primary);
+}
+
+.cellSelected {
+	outline: 2px solid var(--ifm-color-primary-darker);
+	outline-offset: 2px;
+}
+
+.reorgRow {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	margin-top: 0.75rem;
+	flex-wrap: wrap;
+}
+
+.reorgStatus {
+	font-size: 0.85rem;
+	color: var(--ifm-color-emphasis-700);
+}
