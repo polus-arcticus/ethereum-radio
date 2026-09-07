@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" role="img" aria-label="Walking backward from the tip in blockRangeLimit-sized windows, one getLogs call each">
+	<style>
+		.er-chunk-fill {
+			animation: er-chunk-scan 5s ease-in-out infinite;
+			opacity: 0;
+		}
+		.er-chunk-fill--1 { animation-delay: 0s; }
+		.er-chunk-fill--2 { animation-delay: 0.6s; }
+		.er-chunk-fill--3 { animation-delay: 1.2s; }
+		.er-chunk-fill--4 { animation-delay: 1.8s; }
+		.er-chunk-fill--5 { animation-delay: 2.4s; }
+		@keyframes er-chunk-scan {
+			0%, 4% { opacity: 0; }
+			12%, 62% { opacity: 1; }
+			78%, 100% { opacity: 0; }
+		}
+		.er-chunk-sweep {
+			animation: er-sweep-back 5s linear infinite;
+		}
+		@keyframes er-sweep-back {
+			0% { transform: translateX(0); }
+			100% { transform: translateX(-640px); }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			.er-chunk-fill { animation: none; opacity: 0.85; }
+			.er-chunk-sweep { animation: none; opacity: 0; }
+		}
+	</style>
+
+	<g stroke="#cbd5e1" stroke-width="2" fill="none">
+		<rect x="60" y="80" width="128" height="40" rx="6"/>
+		<rect x="188" y="80" width="128" height="40" rx="6"/>
+		<rect x="316" y="80" width="128" height="40" rx="6"/>
+		<rect x="444" y="80" width="128" height="40" rx="6"/>
+		<rect x="572" y="80" width="128" height="40" rx="6"/>
+	</g>
+
+	<g fill="#6366f1">
+		<rect class="er-chunk-fill er-chunk-fill--1" x="576" y="84" width="120" height="32" rx="4"/>
+		<rect class="er-chunk-fill er-chunk-fill--2" x="448" y="84" width="120" height="32" rx="4"/>
+		<rect class="er-chunk-fill er-chunk-fill--3" x="320" y="84" width="120" height="32" rx="4"/>
+		<rect class="er-chunk-fill er-chunk-fill--4" x="192" y="84" width="120" height="32" rx="4"/>
+		<rect class="er-chunk-fill er-chunk-fill--5" x="64" y="84" width="120" height="32" rx="4"/>
+	</g>
+
+	<g class="er-chunk-sweep">
+		<rect x="694" y="74" width="4" height="52" rx="2" fill="#22d3ee"/>
+	</g>
+
+	<g fill="#a5b4fc" font-family="monospace" font-size="13">
+		<text x="60" y="150">floorBlock</text>
+		<text x="700" y="150" text-anchor="end">tip</text>
+	</g>
+	<text x="380" y="46" text-anchor="middle" fill="#a5b4fc" font-family="monospace" font-size="13">← walking backward, blockRangeLimit at a time</text>
+</svg>

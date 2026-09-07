@@ -1,0 +1,52 @@
+---
+sidebar_position: 0
+---
+
+import DiagramFigure from '@site/src/components/DiagramFigure';
+import SpanCoverageSvg from '@site/static/img/span-coverage.svg';
+import BlockChunkingSvg from '@site/static/img/block-chunking.svg';
+import SnapshotHandoffSvg from '@site/static/img/snapshot-handoff.svg';
+
+# Overview
+
+An event log is the cheapest read-only state Ethereum has. Emitting one costs a fraction of a storage write, and a node has to keep it around and serve it back on request — that's the deal the protocol already makes. The problem was never the data; it's that reading it back **as a client**, over `eth_getLogs`, has always meant either running your own infrastructure (an indexer, a subgraph, a backend that re-emits it as an API) or accepting that a dapp can't really use its own history without one.
+
+That said, client-side indexing isn't the right call for every dapp — it fits a specific shape of query, not every one. If what you need is effectively a reverse index over the *entire* history of a collection — a `getNFTsByUserID()` for an NFT contract, say — a client still has to walk every mint and transfer since genesis before it can answer that for *anyone*, because ownership can move in any block and there's no way to scope the walk down without having already indexed everything. Building that in the browser doesn't make it cheap; it just moves a subgraph's job onto every visitor's connection, repeated per tab. That's a real backend's job.
+
+Where this pays off is when the queries themselves are naturally narrow. A dapp built around a DAG of posts (hashchan, for instance) doesn't need every post ever made — it needs the replies under one thread, or the posts from one address, addressed by something the caller already has (a root hash, a topic filter, a floor block). The client only ever has to walk the slice of history actually in view, so a minimal, mostly-manual indexer — scan on demand, no automatic backfill — is genuinely sufficient. The question worth asking before reaching for this: does the query need *all of it*, or does it need *the part reachable from what the caller already knows*? The first is a subgraph's job. The second is what this library is for.
+
+`@ethereum-radio/indexer` is a bet that, for that second shape of query, a browser doesn't need that infrastructure — it needs a client-side library that treats `eth_getLogs` as a resumable, incremental data source instead of a one-shot query. Point it at any RPC (your own node, a public endpoint, or the connected wallet's own provider) and it turns "find every matching log from deployment to tip" into a stream your app can consume as it arrives, picks back up exactly where it left off across reloads, and never re-does work it's already paid for.
+
+Three ideas make that possible. This page describes them at the concept level; [Usage](./usage.mdx) and the API reference cover the how-to.
+
+## The scan-map: tracking coverage, not just matches
+
+The obvious way to remember scan progress is to remember what you found. That's the wrong thing to remember. A block range with zero matching logs isn't "not scanned" — it's scanned, and it came back empty, and that's a completed, reusable answer. If progress-tracking only records hits, every restart has to re-ask every empty range all over again, forever, because there's no way to tell "haven't checked" apart from "checked, nothing there."
+
+So this package tracks coverage instead: a sparse list of `Span {fromBlock, toBlock}` ranges representing "we have already asked an RPC about every block in here" — entirely independent of whether anything matched. Scanning a new window [merges](./api/core.mdx#internal-building-blocks) it into that list, coalescing adjacent or overlapping spans; a reorg check that finds a stale chunk [subtracts](./api/core.mdx#internal-building-blocks) it back out, making that range look unscanned again so the next pass re-fetches it specifically. Bucket that span list against a fixed `blockRangeLimit` grid and you get `Cell {fromBlock, toBlock, scanned}` — pure derived data, exactly what a "scan map" UI colors in as a grid of scanned/unscanned chunks (see the [Try It page](../try-it) for a running one, with a per-chunk "check for reorgs" action wired to the same coordinates).
+
+<DiagramFigure caption="A newly-scanned window closing the gap between two spans — they coalesce into one, the same way mergeSpan() does it.">
+	<SpanCoverageSvg />
+</DiagramFigure>
+
+This is also what makes pause/resume/restart free: a `Cursor` never trusts in-memory state, it re-reads the span list from your `Store` on every call. Stop scanning for a minute, an hour, or between browser sessions, and the next call just resumes wherever the spans currently say to.
+
+## Chunking by block range
+
+Almost no RPC will hand you the full history of a busy contract in one `eth_getLogs` call — public endpoints commonly cap it as low as 5–10 blocks, and even a generous cap can still get an oversized response rejected once a contract is dense enough. So every wide range this package walks gets split into `blockRangeLimit`-sized windows and fetched one stateless call at a time, oldest-scanned-window-last, walking backward from the tip. Stateless matters here specifically: a filter-handle approach (`eth_newFilter` + `eth_getFilterLogs`) can silently go stale behind a round-robin RPC backend if a later poll lands on a different node than the one that created it — a plain `getLogs(from, to)` call every time never has that failure mode, and it's the one primitive every adapter (viem, ethers, or one you write) has to expose either way.
+
+<DiagramFigure caption="One eth_getLogs call per blockRangeLimit-sized window, oldest-scanned-window-last — walking backward from the tip toward floorBlock.">
+	<BlockChunkingSvg />
+</DiagramFigure>
+
+The width itself doesn't have to be a guess: [`detectRpcCapabilities`](./api/core.mdx#detectrpccapabilities) steps an actual `getLogs` call down through a list of candidate widths against your real RPC and reports the largest one that worked, so `blockRangeLimit` reflects what your endpoint actually allows rather than a number that happens to work today. And because a probe against one address can't know how dense a *different* contract's logs really are, `safetyPadding` gives you a second, independent lever to shrink the working window further for something you know is going to be busy — USDC's `Transfer` at a naive width will trip a response-size cap the probe never saw coming.
+
+## Export/import: the scan itself is a portable artifact
+
+Once a client has done the work of walking some history — its spans plus whatever logs matched — that work doesn't have to die with the tab. [`exportSnapshot`](./api/sync.mdx#exportsnapshot)/[`importSnapshot`](./api/sync.mdx#importsnapshot) hand a `{spans, logs}` snapshot to IPFS as one content-addressed object; a brand-new client can pull it back by CID, seed its own `Store` with the spans (`store.save(key, snapshot.spans)`), and start scanning already believing that history is covered — `createRadio`/`radio()` then only have to close the gap up to the current tip, not re-walk everything from `floorBlock`.
+
+<DiagramFigure caption="A snapshot handed off through content-addressed storage — the new client starts already believing that history is covered.">
+	<SnapshotHandoffSvg />
+</DiagramFigure>
+
+That turns a scan from a private, per-client cost into a shareable one: the first person to index a popular contract's full history can publish the CID, and every client after them starts from wherever that snapshot leaves off instead of paying the same RPC bill again. Nothing about this is required — it's an opt-in layer at the edges that never touches `Cursor` or the core scanning path — but it's the natural end-state of treating scan progress as real, portable data instead of throwaway request/response pairs.

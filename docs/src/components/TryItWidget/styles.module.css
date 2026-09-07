@@ -147,3 +147,37 @@
 .radioControllerPopover::backdrop {
 	background: rgb(0 0 0 / 35%);
 }
+
+.statusLight {
+	display: inline-block;
+	width: 0.6rem;
+	height: 0.6rem;
+	border-radius: 50%;
+	margin-right: 0.5rem;
+	vertical-align: middle;
+}
+
+.statusLightRed {
+	background: var(--ifm-color-danger);
+}
+
+.statusLightYellow {
+	background: var(--ifm-color-warning);
+	animation: statusLightPulse 1.4s ease-in-out infinite;
+}
+
+.statusLightGreen {
+	background: var(--ifm-color-success);
+	box-shadow: 0 0 0.35rem var(--ifm-color-success);
+}
+
+@keyframes statusLightPulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.statusLightYellow {
+		animation: none;
+	}
+}

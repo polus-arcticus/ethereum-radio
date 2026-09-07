@@ -1,0 +1,16 @@
+.figure {
+	margin: 1.75rem auto;
+	max-width: 40rem;
+	text-align: center;
+}
+
+.figure svg {
+	width: 100%;
+	height: auto;
+}
+
+.caption {
+	margin-top: 0.5rem;
+	font-size: 0.85rem;
+	color: var(--ifm-color-emphasis-700);
+}

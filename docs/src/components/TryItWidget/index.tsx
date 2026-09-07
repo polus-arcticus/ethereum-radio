@@ -25,6 +25,7 @@ import {createViemAdapter} from '@ethereum-radio/indexer/adapters/viem';
 import {createMemoryStore} from '@ethereum-radio/indexer/storage/memory';
 import type {Cell} from '@ethereum-radio/indexer/core/spans';
 import type {Checkpoint} from '@ethereum-radio/indexer/core/checkpoints';
+import type {GetLogsParams, LogsProvider} from '@ethereum-radio/indexer/adapters/types';
 import {wagmiConfig} from '../../lib/wagmi';
 import ScanMapGrid from './ScanMapGrid';
 import RpcDoctorPanel from './RpcDoctorPanel';
@@ -32,6 +33,36 @@ import RadioControllerPopover from './RadioControllerPopover';
 import styles from './styles.module.css';
 
 const queryClient = new QueryClient();
+
+// Temporary diagnostic aid — logs every real getLogs() window (range,
+// duration, result count) to the console. There's currently no way to see
+// which window a "stuck" scan is actually blocked on: pause/cancel only take
+// effect between chunks (see useRadioController), not inside an in-flight
+// request, and radio()/Cursor never surface per-window timing on their own.
+// Wrapping the provider here is a zero-footprint way to watch that live
+// without touching the published package.
+const withDebugLogging = (provider: LogsProvider): LogsProvider => ({
+	...provider,
+	getLogs: async (params: GetLogsParams) => {
+		const {fromBlock, toBlock} = params;
+		const width = toBlock - fromBlock + 1n;
+		const start = performance.now();
+		console.debug(`[radio] → getLogs ${fromBlock}–${toBlock} (${width} blocks)…`);
+		try {
+			const logs = await provider.getLogs(params);
+			console.debug(
+				`[radio] ← ${fromBlock}–${toBlock} in ${Math.round(performance.now() - start)}ms, ${logs.length} log(s)`,
+			);
+			return logs;
+		} catch (e) {
+			console.debug(
+				`[radio] ✗ ${fromBlock}–${toBlock} failed after ${Math.round(performance.now() - start)}ms:`,
+				e,
+			);
+			throw e;
+		}
+	},
+});
 
 export default function TryItWidget(): ReactNode {
 	return (
@@ -129,9 +160,13 @@ function ScanForm() {
 	const [address, setAddress] = useState<string>(EXAMPLE_ADDRESS);
 	const [eventSignature, setEventSignature] = useState(EXAMPLE_EVENT_SIGNATURE);
 	const [argInputs, setArgInputs] = useState<Record<string, string>>({});
-	const [lookback, setLookback] = useState('5000');
+	// Absolute block number, not a relative lookback — auto-populated once RPC
+	// detection resolves (2x the detected maxBlockRange back from tip), but
+	// left editable so a narrower or wider scan can be dialed in directly.
+	const [floorBlockInput, setFloorBlockInput] = useState('');
 	const [addressError, setAddressError] = useState<string | null>(null);
 	const [eventError, setEventError] = useState<string | null>(null);
+	const [floorBlockError, setFloorBlockError] = useState<string | null>(null);
 	const [scan, setScan] = useState<ScanConfig | null>(null);
 	const [probeTip, setProbeTip] = useState<bigint | null>(null);
 	const [rpcDetecting, setRpcDetecting] = useState(false);
@@ -163,9 +198,7 @@ function ScanForm() {
 
 	const indexedParams = useMemo(() => (event?.inputs ?? []).filter(isIndexed), [event]);
 
-	const onSubmit = async (formEvent: FormEvent) => {
-    console.log('submitting', formEvent);
-    console.log('publicClient', publicClient);
+	const onSubmit = (formEvent: FormEvent) => {
 		formEvent.preventDefault();
 		if (!publicClient) return;
 		if (!isAddress(address)) {
@@ -195,11 +228,22 @@ function ScanForm() {
 			return;
 		}
 		setEventError(null);
-		const tip = await publicClient.getBlockNumber();
-    console.log('tip', tip);
-		const lookbackBlocks = BigInt(Math.max(0, Number(lookback) || 0));
-    console.log('lookbackBlocks', lookbackBlocks);
-		const floorBlock = tip > lookbackBlocks ? tip - lookbackBlocks : 0n;
+		if (!floorBlockInput.trim()) {
+			setFloorBlockError('Still waiting on RPC detection to suggest one — or enter a block number manually');
+			return;
+		}
+		let floorBlock: bigint;
+		try {
+			floorBlock = BigInt(floorBlockInput.trim());
+		} catch {
+			setFloorBlockError('Not a valid block number');
+			return;
+		}
+		if (floorBlock < 0n) {
+			setFloorBlockError('Must be 0 or greater');
+			return;
+		}
+		setFloorBlockError(null);
 		setScan({address, topics, floorBlock, blockRangeLimit});
 	};
 
@@ -259,7 +303,11 @@ function ScanForm() {
 							chainId={chainId}
 							tip={probeTip}
 							onBlockRangeLimit={setBlockRangeLimit}
-							onMaxBlockRange={(range) => setLookback(range.toString())}
+							onMaxBlockRange={(range) => {
+								if (probeTip === null) return;
+								const suggested = probeTip > range * 2n ? probeTip - range * 2n : 0n;
+								setFloorBlockInput(suggested.toString());
+							}}
 							onDetectingChange={setRpcDetecting}
 						/>
 					)}
@@ -287,7 +335,7 @@ function ScanForm() {
 						</label>
 					))}
 					<label className={styles.field}>
-						Look back this many blocks
+						Floor block (scan won't go back further than this)
 						{rpcDetecting && (
 							<span className={styles.warning}>
 								Waiting on the RPC capabilities probe above — this will be overwritten once it finishes.
@@ -296,12 +344,13 @@ function ScanForm() {
 						<input
 							type="number"
 							min="0"
-							value={lookback}
+							value={floorBlockInput}
 							disabled={rpcDetecting}
-							onChange={(e) => setLookback(e.target.value)}
+							onChange={(e) => setFloorBlockInput(e.target.value)}
 						/>
+						{floorBlockError && <span className={styles.error}>{floorBlockError}</span>}
 					</label>
-					<button type="submit" className="button button--primary">
+					<button type="submit" className="button button--primary" disabled={rpcDetecting}>
 						Start scanning
 					</button>
 				</form>
@@ -324,7 +373,7 @@ function ResultsPanel({
 	publicClient,
 }: ScanConfig & {publicClient: PublicClient}) {
 	const scanKey = `${address}:${topics.join(',')}:${floorBlock}`;
-	const provider = useMemo(() => createViemAdapter(publicClient), [publicClient]);
+	const provider = useMemo(() => withDebugLogging(createViemAdapter(publicClient)), [publicClient]);
 	// Held outside useRadioController (which never constructs its own storage,
 	// same convention as useCursor) so pause()/resume() reuse the same
 	// progress rather than losing it — stable per scanKey, not per

@@ -56,9 +56,9 @@ export default function RpcDoctorPanel({
 			setDetecting(false);
 			onBlockRangeLimit(final.maxBlockRange ? safeBlockRangeLimit(final.maxBlockRange) : FALLBACK_BLOCK_RANGE_LIMIT);
 			// The raw detected width (not the fencepost-adjusted blockRangeLimit)
-			// — a reasonable default "how far back to scan" since it's the
-			// widest single window this RPC proved it can serve.
-			if (final.maxBlockRange) onMaxBlockRange?.(final.maxBlockRange);
+			// — fed to the parent's floor-block suggestion either way, so a
+			// scan-window default exists even when every probe candidate failed.
+			onMaxBlockRange?.(final.maxBlockRange ?? FALLBACK_BLOCK_RANGE_LIMIT);
 		});
 		return () => {
 			cancelled = true;

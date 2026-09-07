@@ -1,5 +1,6 @@
 import type {ReactNode} from 'react';
 import type {RadioControllerStatus} from '@ethereum-radio/indexer/react';
+import StatusLight from './StatusLight';
 import styles from './styles.module.css';
 
 interface RadioControllerPopoverProps {
@@ -53,10 +54,14 @@ export default function RadioControllerPopover({
 				type="button"
 				popoverTarget={POPOVER_ID}
 				className="button button--secondary button--sm">
+				<StatusLight status={status} />
 				Scan status: {STATUS_LABEL[status]} ({formatElapsed(elapsedMs)})
 			</button>
 			<div id={POPOVER_ID} popover="auto" className={styles.radioControllerPopover}>
-				<strong>Radio controller</strong>
+				<strong>
+					<StatusLight status={status} />
+					Radio controller
+				</strong>
 				<p className={styles.reorgStatus}>
 					{STATUS_LABEL[status]} — {formatElapsed(elapsedMs)} elapsed — {totalFound} log(s) found
 				</p>
