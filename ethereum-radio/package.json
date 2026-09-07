@@ -1,7 +1,11 @@
 {
 	"name": "@ethereum-radio/indexer",
 	"version": "0.0.1",
+	"license": "Unlicense",
 	"private": false,
+	"publishConfig": {
+		"access": "public"
+	},
 	"type": "module",
 	"exports": {
 		".": {
