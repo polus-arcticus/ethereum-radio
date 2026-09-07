@@ -5,9 +5,24 @@ export interface RadioOptions {
 	/** Delay between live-tail sync() polls once history is fully replayed. */
 	pollIntervalMs?: number;
 	signal?: AbortSignal;
+	/**
+	 * Caps how long the history-replay loop can run without yielding a
+	 * macrotask tick back to the environment (letting a browser paint, handle
+	 * input, etc.) — independent of whether a given fetchHistory() call found
+	 * any logs. A small blockRangeLimit against a long floorBlock lookback can
+	 * mean hundreds or thousands of fast-resolving iterations in a row; each
+	 * individual `await` is genuinely async, but back-to-back promise
+	 * resolutions with no macrotask boundary between them can still starve
+	 * rendering. Default: 50ms.
+	 */
+	yieldEveryMs?: number;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 4_000;
+const DEFAULT_YIELD_EVERY_MS = 50;
+
+const yieldToEventLoop = (): Promise<void> =>
+	new Promise((resolve) => setTimeout(resolve, 0));
 
 // Resolves after `ms`, or immediately if `signal` is already (or becomes)
 // aborted — the {signal} convention Helia's own APIs use, kept for
@@ -39,7 +54,11 @@ export async function* radio(
 	cursor: Cursor,
 	options: RadioOptions = {},
 ): AsyncGenerator<RawLog[]> {
-	const {pollIntervalMs = DEFAULT_POLL_INTERVAL_MS, signal} = options;
+	const {
+		pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+		signal,
+		yieldEveryMs = DEFAULT_YIELD_EVERY_MS,
+	} = options;
 
 	// sync() first, not fetchHistory(): fetchHistory() only ever walks
 	// backward, and against an empty store its first window stops short of
@@ -51,9 +70,14 @@ export async function* radio(
 	const initial = await cursor.sync();
 	if (initial.length) yield initial;
 
+	let lastYield = Date.now();
 	while (!signal?.aborted && !(await cursor.isFullyScanned())) {
 		const logs = await cursor.fetchHistory();
 		if (logs.length) yield logs;
+		if (Date.now() - lastYield >= yieldEveryMs) {
+			await yieldToEventLoop();
+			lastYield = Date.now();
+		}
 	}
 
 	while (!signal?.aborted) {

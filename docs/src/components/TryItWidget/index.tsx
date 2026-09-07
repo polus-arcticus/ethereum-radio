@@ -9,14 +9,26 @@ import {
 	usePublicClient,
 	useSwitchChain,
 } from 'wagmi';
-import {isAddress, isHex, keccak256, toBytes, type Hex, type PublicClient} from 'viem';
-import {createRadio, type RawLog, type ReorgCheckResult} from '@ethereum-radio/indexer';
+import {
+	encodeEventTopics,
+	getAddress,
+	isAddress,
+	parseAbiItem,
+	type AbiEvent,
+	type Hex,
+	type PublicClient,
+} from 'viem';
+import {mainnet} from 'wagmi/chains';
+import type {ReorgCheckResult} from '@ethereum-radio/indexer';
+import {useRadioController} from '@ethereum-radio/indexer/react';
 import {createViemAdapter} from '@ethereum-radio/indexer/adapters/viem';
 import {createMemoryStore} from '@ethereum-radio/indexer/storage/memory';
 import type {Cell} from '@ethereum-radio/indexer/core/spans';
 import type {Checkpoint} from '@ethereum-radio/indexer/core/checkpoints';
 import {wagmiConfig} from '../../lib/wagmi';
 import ScanMapGrid from './ScanMapGrid';
+import RpcDoctorPanel from './RpcDoctorPanel';
+import RadioControllerPopover from './RadioControllerPopover';
 import styles from './styles.module.css';
 
 const queryClient = new QueryClient();
@@ -67,46 +79,128 @@ function ConnectPanel() {
 	);
 }
 
-// Solidity hashes indexed string/bytes params into keccak256(value) — see
-// docs/usage.mdx#filtering-on-hashed-dynamic-types. A raw 32-byte hex value
-// is used as-is; anything else is treated as the plain value and hashed.
-const toTopic = (raw: string): Hex | null => {
+// `parseAbiItem` needs the human-readable-ABI keyword prefix ("event ...");
+// let the field itself just take the bare signature.
+const parseEventSignature = (raw: string): AbiEvent | null => {
 	const trimmed = raw.trim();
 	if (!trimmed) return null;
-	if (isHex(trimmed) && trimmed.length === 66) return trimmed;
-	return keccak256(toBytes(trimmed));
+	const item = parseAbiItem(trimmed.startsWith('event ') ? trimmed : `event ${trimmed}`);
+	if (item.type !== 'event') throw new Error('Not an event signature');
+	return item;
+};
+
+type IndexedParam = AbiEvent['inputs'][number] & {name: string};
+
+const isIndexed = (input: AbiEvent['inputs'][number]): input is IndexedParam =>
+	'indexed' in input && input.indexed === true && !!input.name;
+
+// Only the ABI types viem's encodeEventTopics can actually turn into a topic:
+// dynamic types (string/bytes) get hashed, everything else gets ABI-encoded
+// and left-padded to 32 bytes — arrays/tuples aren't supported as topics at
+// all (Solidity hashes the whole encoded value for those, which this demo
+// doesn't attempt to reproduce).
+const coerceIndexedArg = (type: string, raw: string): unknown => {
+	if (type === 'bool') return raw.trim().toLowerCase() === 'true';
+	if (type.startsWith('uint') || type.startsWith('int')) return BigInt(raw.trim());
+	return raw.trim();
 };
 
 interface ScanConfig {
 	address: `0x${string}`;
-	topics: (Hex | null)[];
+	topics: (Hex | Hex[] | null)[];
 	floorBlock: bigint;
+	blockRangeLimit: bigint;
 }
+
+// Prepopulated so the form is never blank on first load — WETH's Transfer
+// event on mainnet is a reliably high-volume, well-known example that shows
+// results immediately for anyone connected to mainnet. Written lowercase and
+// checksummed via getAddress() rather than hand-typed mixed-case, so a typo
+// here can't silently produce a wrong-but-valid-looking address.
+const EXAMPLE_ADDRESS = getAddress('0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2');
+const EXAMPLE_EVENT_SIGNATURE = 'Transfer(address indexed from, address indexed to, uint256 value)';
 
 function ScanForm() {
 	const publicClient = usePublicClient();
 	const {chains, mutate: switchChain} = useSwitchChain();
 	const {mutate: disconnect} = useDisconnect();
-	const {address: account} = useConnection();
+	const {address: account, chain, chainId} = useConnection();
 
-	const [address, setAddress] = useState('');
-	const [topicInputs, setTopicInputs] = useState(['', '', '']);
+	const [address, setAddress] = useState<string>(EXAMPLE_ADDRESS);
+	const [eventSignature, setEventSignature] = useState(EXAMPLE_EVENT_SIGNATURE);
+	const [argInputs, setArgInputs] = useState<Record<string, string>>({});
 	const [lookback, setLookback] = useState('5000');
 	const [addressError, setAddressError] = useState<string | null>(null);
+	const [eventError, setEventError] = useState<string | null>(null);
 	const [scan, setScan] = useState<ScanConfig | null>(null);
+	const [probeTip, setProbeTip] = useState<bigint | null>(null);
+	const [rpcDetecting, setRpcDetecting] = useState(false);
+	const [blockRangeLimit, setBlockRangeLimit] = useState<bigint>(2_000n);
 
-	const onSubmit = async (event: FormEvent) => {
-		event.preventDefault();
+	const provider = useMemo(() => (publicClient ? createViemAdapter(publicClient) : null), [publicClient]);
+
+	// A rough tip is all detectRpcCapabilities needs (it only uses it as the
+	// probe's toBlock) — fetched once per publicClient rather than polled, so
+	// this doesn't compete with ResultsPanel's own polling once scanning starts.
+	useEffect(() => {
+		if (!publicClient) return;
+		let cancelled = false;
+		void publicClient.getBlockNumber().then((t) => {
+			if (!cancelled) setProbeTip(t);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [publicClient]);
+
+	const {event, parseError} = useMemo(() => {
+		try {
+			return {event: parseEventSignature(eventSignature), parseError: null};
+		} catch (e) {
+			return {event: null, parseError: e instanceof Error ? e.message : String(e)};
+		}
+	}, [eventSignature]);
+
+	const indexedParams = useMemo(() => (event?.inputs ?? []).filter(isIndexed), [event]);
+
+	const onSubmit = async (formEvent: FormEvent) => {
+    console.log('submitting', formEvent);
+    console.log('publicClient', publicClient);
+		formEvent.preventDefault();
 		if (!publicClient) return;
 		if (!isAddress(address)) {
 			setAddressError('Not a valid address');
 			return;
 		}
 		setAddressError(null);
+		if (!event) {
+			setEventError(parseError ?? 'Enter a valid event signature');
+			return;
+		}
+		const args: Record<string, unknown> = {};
+		try {
+			for (const param of indexedParams) {
+				const raw = argInputs[param.name]?.trim();
+				if (raw) args[param.name] = coerceIndexedArg(param.type, raw);
+			}
+		} catch (e) {
+			setEventError(e instanceof Error ? e.message : String(e));
+			return;
+		}
+		let topics: (Hex | Hex[] | null)[];
+		try {
+			topics = encodeEventTopics({abi: [event], eventName: event.name, args});
+		} catch (e) {
+			setEventError(e instanceof Error ? e.message : String(e));
+			return;
+		}
+		setEventError(null);
 		const tip = await publicClient.getBlockNumber();
+    console.log('tip', tip);
 		const lookbackBlocks = BigInt(Math.max(0, Number(lookback) || 0));
+    console.log('lookbackBlocks', lookbackBlocks);
 		const floorBlock = tip > lookbackBlocks ? tip - lookbackBlocks : 0n;
-		setScan({address, topics: topicInputs.map(toTopic), floorBlock});
+		setScan({address, topics, floorBlock, blockRangeLimit});
 	};
 
 	return (
@@ -116,6 +210,21 @@ function ScanForm() {
 				<button className="button button--secondary button--sm" onClick={() => disconnect()}>
 					Disconnect
 				</button>
+			</div>
+
+			{/* Wallets happily stay on whatever chain they were last pointed at, and a
+			    chain like Sepolia is "supported" (publicClient resolves fine) but won't
+			    have the prefilled WETH example — so surface the active network any time
+			    it isn't mainnet, not only when it's fully unsupported below. */}
+			<div className={styles.row}>
+				<span>Network: {chain?.name ?? `Unknown (chain ${chainId})`}</span>
+				{chainId !== mainnet.id && (
+					<button
+						className="button button--secondary button--sm"
+						onClick={() => switchChain({chainId: mainnet.id})}>
+						Switch to {mainnet.name}
+					</button>
+				)}
 			</div>
 
 			{!publicClient ? (
@@ -135,7 +244,7 @@ function ScanForm() {
 			) : (
 				<form onSubmit={onSubmit} className={styles.form}>
 					<label className={styles.field}>
-						Contract address
+						Contract address (prefilled with WETH on mainnet — swap in your own)
 						<input
 							value={address}
 							onChange={(e) => setAddress(e.target.value)}
@@ -143,26 +252,52 @@ function ScanForm() {
 						/>
 						{addressError && <span className={styles.error}>{addressError}</span>}
 					</label>
-					{topicInputs.map((value, i) => (
-						<label className={styles.field} key={i}>
-							Topic {i + 1} (optional — plain text gets hashed)
+					{provider && isAddress(address) && probeTip !== null && chainId !== undefined && (
+						<RpcDoctorPanel
+							provider={provider}
+							address={address}
+							chainId={chainId}
+							tip={probeTip}
+							onBlockRangeLimit={setBlockRangeLimit}
+							onMaxBlockRange={(range) => setLookback(range.toString())}
+							onDetectingChange={setRpcDetecting}
+						/>
+					)}
+					<label className={styles.field}>
+						Event signature
+						<input
+							value={eventSignature}
+							onChange={(e) => setEventSignature(e.target.value)}
+							placeholder="Transfer(address indexed from, address indexed to, uint256 value)"
+						/>
+						{eventError && <span className={styles.error}>{eventError}</span>}
+					</label>
+					{indexedParams.map((param) => (
+						<label className={styles.field} key={param.name}>
+							{param.type} {param.name} (indexed — optional, leave blank to match any)
 							<input
-								value={value}
-								onChange={(e) => {
-									const next = [...topicInputs];
-									next[i] = e.target.value;
-									setTopicInputs(next);
-								}}
-								placeholder={i === 0 ? 'leave blank to match any event' : 'e.g. alice'}
+								value={argInputs[param.name] ?? ''}
+								onChange={(e) => setArgInputs({...argInputs, [param.name]: e.target.value})}
+								placeholder={
+									param.type === 'string' || param.type.startsWith('bytes')
+										? 'plain text gets hashed'
+										: `e.g. ${param.type === 'address' ? '0x...' : '123'}`
+								}
 							/>
 						</label>
 					))}
 					<label className={styles.field}>
 						Look back this many blocks
+						{rpcDetecting && (
+							<span className={styles.warning}>
+								Waiting on the RPC capabilities probe above — this will be overwritten once it finishes.
+							</span>
+						)}
 						<input
 							type="number"
 							min="0"
 							value={lookback}
+							disabled={rpcDetecting}
 							onChange={(e) => setLookback(e.target.value)}
 						/>
 					</label>
@@ -177,80 +312,70 @@ function ScanForm() {
 	);
 }
 
-function ResultsPanel({address, topics, floorBlock, publicClient}: ScanConfig & {publicClient: PublicClient}) {
-	const [logs, setLogs] = useState<RawLog[]>([]);
-	const [fullyScanned, setFullyScanned] = useState(false);
-	const [error, setError] = useState<Error | null>(null);
+// Kept modest — this is what renders, and useRadioController's totalFound
+// still counts everything found regardless of this cap.
+const LOG_DISPLAY_CAP = 50;
+
+function ResultsPanel({
+	address,
+	topics,
+	floorBlock,
+	blockRangeLimit,
+	publicClient,
+}: ScanConfig & {publicClient: PublicClient}) {
+	const scanKey = `${address}:${topics.join(',')}:${floorBlock}`;
+	const provider = useMemo(() => createViemAdapter(publicClient), [publicClient]);
+	// Held outside useRadioController (which never constructs its own storage,
+	// same convention as useCursor) so pause()/resume() reuse the same
+	// progress rather than losing it — stable per scanKey, not per
+	// blockRangeLimit, since that's fixed once a scan starts anyway.
+	const store = useMemo(() => createMemoryStore(), [scanKey]);
+	const checkpointStore = useMemo(() => createMemoryStore<Checkpoint>(), [scanKey]);
+
 	const [cells, setCells] = useState<Cell[]>([]);
 	const [selectedCell, setSelectedCell] = useState<Cell | null>(null);
 	const [reorgResult, setReorgResult] = useState<ReorgCheckResult | null>(null);
+	const [reorgError, setReorgError] = useState<Error | null>(null);
 	const [reorgChecking, setReorgChecking] = useState(false);
 
-	const radio = useMemo(
-		() =>
-			createRadio({
-				provider: createViemAdapter(publicClient),
-				store: createMemoryStore(),
-				checkpointStore: createMemoryStore<Checkpoint>(),
-				key: `${address}:${topics.join(',')}:${floorBlock}`,
-				address,
-				topics,
-				floorBlock,
-				blockRangeLimit: 2_000n, // fixed for this demo — see docs/api/core.mdx for rpc-doctor auto-detection
-			}),
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[publicClient, address, JSON.stringify(topics), floorBlock],
-	);
+	const {status, logs, totalFound, isTakingAWhile, elapsedMs, error, pause, resume, cancel, cursor} =
+		useRadioController({
+			provider,
+			store,
+			checkpointStore,
+			key: scanKey,
+			address,
+			topics,
+			floorBlock,
+			blockRangeLimit, // detected via RpcDoctorPanel — see docs/api/core.mdx#detectrpccapabilities
+			logCap: LOG_DISPLAY_CAP,
+		});
 
+	// getCellStates() is Cursor surface, not stream/control surface — useRadioController
+	// deliberately doesn't duplicate it (see that hook's UseRadioControllerResult
+	// comment), so the scan-map grid polls the same underlying cursor directly.
 	useEffect(() => {
-		setLogs([]);
-		setFullyScanned(false);
-		setError(null);
-		setCells([]);
 		setSelectedCell(null);
 		setReorgResult(null);
-		const controller = new AbortController();
-
-		// radio only yields non-empty chunks, so a scan with zero matches would
-		// never update `fullyScanned`/the scan-map grid via the loop below alone
-		// — poll them separately (cheap, store-only reads plus one tip lookup)
-		// so the status line and grid stay accurate even when nothing's found.
-		const statusInterval = setInterval(() => {
+		setReorgError(null);
+		const interval = setInterval(() => {
 			void publicClient.getBlockNumber().then(async (tip) => {
-				setFullyScanned(await radio.isFullyScanned());
-				setCells(await radio.getCellStates(tip));
+				setCells(await cursor.getCellStates(tip));
 			});
 		}, 1_000);
-
-		(async () => {
-			try {
-				for await (const chunk of radio) {
-					if (controller.signal.aborted) break;
-					setLogs((prev) => [...chunk, ...prev]);
-					setFullyScanned(await radio.isFullyScanned());
-				}
-			} catch (e) {
-				if (!controller.signal.aborted) {
-					setError(e instanceof Error ? e : new Error(String(e)));
-				}
-			}
-		})();
-
-		return () => {
-			controller.abort();
-			clearInterval(statusInterval);
-		};
-	}, [radio, publicClient]);
+		return () => clearInterval(interval);
+	}, [cursor, publicClient]);
 
 	const onCheckForReorg = async () => {
 		if (!selectedCell) return;
 		setReorgChecking(true);
 		setReorgResult(null);
+		setReorgError(null);
 		try {
-			const result = await radio.checkForReorg(selectedCell.fromBlock, selectedCell.toBlock);
+			const result = await cursor.checkForReorg(selectedCell.fromBlock, selectedCell.toBlock);
 			setReorgResult(result);
 		} catch (e) {
-			setError(e instanceof Error ? e : new Error(String(e)));
+			setReorgError(e instanceof Error ? e : new Error(String(e)));
 		} finally {
 			setReorgChecking(false);
 		}
@@ -258,16 +383,32 @@ function ResultsPanel({address, topics, floorBlock, publicClient}: ScanConfig & 
 
 	return (
 		<div className={styles.results}>
+			<RadioControllerPopover
+				status={status}
+				elapsedMs={elapsedMs}
+				totalFound={totalFound}
+				isTakingAWhile={isTakingAWhile}
+				pause={pause}
+				resume={resume}
+				cancel={cancel}
+			/>
 			<p>
 				{error
 					? `Error: ${error.message}`
-					: fullyScanned
+					: status === 'caught-up'
 						? 'Caught up — now watching for new blocks.'
-						: 'Scanning history…'}
+						: status === 'paused'
+							? 'Paused.'
+							: status === 'cancelled'
+								? 'Cancelled.'
+								: 'Scanning history…'}
 			</p>
-			<p>{logs.length} log(s) found</p>
+			<p>
+				{totalFound} log(s) found
+				{totalFound > logs.length && ` (showing the most recent ${logs.length})`}
+			</p>
 			<ul className={styles.logList}>
-				{logs.slice(0, 50).map((log) => (
+				{logs.map((log) => (
 					<li key={`${log.transactionHash}-${log.logIndex}`}>
 						block {log.blockNumber.toString()} — {log.transactionHash}
 					</li>
@@ -293,10 +434,11 @@ function ResultsPanel({address, topics, floorBlock, publicClient}: ScanConfig & 
 						{reorgChecking ? 'Checking…' : 'Check for reorgs'}
 					</button>
 					<span className={styles.reorgStatus}>
-						{reorgResult?.status === 'unchecked' &&
+						{reorgError && `Error: ${reorgError.message}`}
+						{!reorgError && reorgResult?.status === 'unchecked' &&
 							'No baseline recorded yet — one has been established for next time.'}
-						{reorgResult?.status === 'ok' && 'No reorg — header hash still matches.'}
-						{reorgResult?.status === 'reorged' &&
+						{!reorgError && reorgResult?.status === 'ok' && 'No reorg — header hash still matches.'}
+						{!reorgError && reorgResult?.status === 'reorged' &&
 							`Reorg detected — chunk reindexed, ${reorgResult.logs.length} log(s) found on rescan.`}
 					</span>
 				</div>

@@ -2,7 +2,7 @@ import {before, describe, it} from 'node:test';
 import {expect} from 'earl';
 import {numberToHex} from 'viem';
 import {radio, createRadio} from '../../src/core/radio.ts';
-import {createCursor} from '../../src/core/cursor.ts';
+import {createCursor, type Cursor} from '../../src/core/cursor.ts';
 import {createMemoryStore} from '../../src/storage/memory.ts';
 import {createViemAdapter} from '../../src/adapters/viem.ts';
 import {
@@ -222,5 +222,63 @@ describe('createRadio (real Anvil)', () => {
 		expect(await radioInstance.getScannedSpans()).toEqual([
 			{fromBlock: floor, toBlock: floor},
 		]);
+	});
+});
+
+describe('radio yieldEveryMs', () => {
+	// A fake Cursor rather than real Anvil here — this is specifically testing
+	// the pathological case a small blockRangeLimit exposes: hundreds of
+	// fast-resolving, empty fetchHistory() calls in a row (nothing to yield to
+	// the consumer), which is exactly when the event loop needs a forced
+	// macrotask tick most. Driving that many real RPC round trips just to
+	// exercise the timing logic would be slow and non-deterministic.
+	it('inserts a macrotask tick during a long, fast-resolving replay', async () => {
+		let historyIterations = 0;
+		const fakeCursor: Cursor = {
+			scanRange: async () => [],
+			sync: async () => [],
+			fetchHistory: async () => {
+				historyIterations++;
+				return [];
+			},
+			fetchForward: async () => [],
+			getScannedSpans: async () => [],
+			getCellStates: async () => [],
+			isFullyScanned: async () => historyIterations >= 200,
+			getLiveSpan: async () => undefined,
+			getEarliestSpan: async () => undefined,
+			checkForReorg: async () => ({status: 'unchecked'}),
+		};
+
+		const originalSetTimeout = globalThis.setTimeout;
+		let zeroDelayTicks = 0;
+		globalThis.setTimeout = ((fn: () => void, delay?: number) => {
+			if (delay === 0) zeroDelayTicks++;
+			return originalSetTimeout(fn, delay as number);
+		}) as typeof setTimeout;
+
+		const controller = new AbortController();
+		try {
+			const iteration = (async () => {
+				for await (const _chunk of radio(fakeCursor, {
+					pollIntervalMs: 5,
+					yieldEveryMs: 1,
+					signal: controller.signal,
+				})) {
+					// Never yields (fetchHistory always returns []) — draining
+					// just drives the generator through its internal loop.
+				}
+			})();
+			// Long enough for all 200 fast, empty iterations to run — several
+			// times over the 1ms yield threshold.
+			await new Promise((resolve) => originalSetTimeout(resolve, 50));
+			controller.abort();
+			await iteration;
+		} finally {
+			globalThis.setTimeout = originalSetTimeout;
+		}
+
+		expect(historyIterations).toBeGreaterThanOrEqual(200);
+		expect(zeroDelayTicks).toBeGreaterThan(0);
 	});
 });

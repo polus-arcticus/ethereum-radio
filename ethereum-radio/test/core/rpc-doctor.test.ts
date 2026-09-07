@@ -13,9 +13,8 @@ import {
 } from '../fixtures/chain-environment.ts';
 
 describe('safeBlockRangeLimit', () => {
-	it('applies the golden-ratio safety margin', () => {
-		// (1/PHI + 1/PHI^3) ≈ 0.8541019662496845
-		expect(safeBlockRangeLimit(100_000n)).toEqual(85_410n);
+	it('backs off one block as a fencepost guard', () => {
+		expect(safeBlockRangeLimit(100_000n)).toEqual(99_999n);
 	});
 
 	it('floors at 1 even for a tiny detected range', () => {

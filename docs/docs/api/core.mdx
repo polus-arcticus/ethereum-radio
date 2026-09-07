@@ -33,10 +33,14 @@ interface RadioOptions {
 	/** Delay between live-tail sync() polls once history is fully replayed. Default: 4000ms. */
 	pollIntervalMs?: number;
 	signal?: AbortSignal;
+	/** Caps how long the history-replay loop runs without yielding a macrotask tick back to the environment. Default: 50ms. */
+	yieldEveryMs?: number;
 }
 ```
 
 Cancellation is the standard `for await...of` + `break` pattern, or pass `signal` to cancel from outside the loop body (e.g. a React effect's cleanup).
+
+`yieldEveryMs` matters when `blockRangeLimit` is small relative to how far back `floorBlock` sits — replaying history can then take hundreds or thousands of `fetchHistory()` iterations, each a genuinely async `await`. If those calls resolve quickly (a fast RPC, an empty stretch with no logs to yield), back-to-back promise resolutions with no macrotask boundary between them can still starve a browser's paint cycle even though nothing is technically blocking. `radio()` inserts a `setTimeout(0)` tick whenever more than `yieldEveryMs` has elapsed since the last one, regardless of whether a chunk had any logs.
 
 ## `Cursor`
 
@@ -131,9 +135,11 @@ if (getLogs === 'fail') {
 }
 
 const blockRangeLimit = maxBlockRange
-	? safeBlockRangeLimit(maxBlockRange) // golden-ratio margin below the detected max
+	? safeBlockRangeLimit(maxBlockRange) // backs off one block as a fencepost guard
 	: 2_000n; // every candidate width failed — fall back to a conservative default
 ```
+
+`safeBlockRangeLimit` only adjusts for the range boundary itself — it doesn't protect against a secondary RPC cap keyed on response size or log count, which can still reject an in-range request against a denser event than whatever address `detectRpcCapabilities` probed with. If you expect heavy log volume, use [`CursorConfig`](#createcursor)'s `safetyPadding` to shrink the actual scan window instead.
 
 **Why there's no `eth_newFilter`/`eth_getFilterLogs` check:** [`LogsProvider`](#logsprovider) only ever exposes a stateless `getLogs` — that's the one primitive `chunkedFetchLogs`/`Cursor` actually call, deliberately (see [Adapters](./adapters.mdx#why-an-adapter-at-all)): a filter handle can silently go stale against a round-robin/load-balanced RPC backend if a later call lands on a different node than the one that created it. A one-shot capability probe couldn't detect that failure mode anyway — it's a statefulness bug that only shows up across multiple calls hitting different backend nodes over time, not something a single request can observe. Since this package never calls filter methods in the first place, there's nothing here to gate a decision on even if it could.
 
@@ -152,12 +158,16 @@ interface CursorConfig {
 	/** A floor below which logs can't exist (e.g. a contract's deployment block). */
 	floorBlock: bigint;
 	blockRangeLimit: bigint;
+	/** Optional multiplier (0–1] shrinking the actual scan window below blockRangeLimit. Default: 1.0 (no padding). */
+	safetyPadding?: number;
 	/** Optional forward-scan anchor — enables fetchForward() extending from a known block. */
 	atBlock?: bigint;
 	/** Required for checkForReorg() — where recorded header hashes persist. */
 	checkpointStore?: Store<Checkpoint[]>;
 }
 ```
+
+**`safetyPadding`** — a second, independent knob from `safeBlockRangeLimit`'s fencepost adjustment: `detectRpcCapabilities` probes with whatever address you give it, but a real scan against a much busier contract (e.g. USDC's `Transfer`) can pack far more logs into the same block width than the probe ever saw, and some RPCs cap `eth_getLogs` by response size or log count rather than pure block width — a request that's technically in-range can still get rejected. Setting `safetyPadding: 0.5`, for example, uses half of `blockRangeLimit` as the actual window width, trading more `getLogs` calls for headroom against that. Leave it unset unless you have a specific reason to expect dense logs — most contracts don't need it.
 
 `createRadio`/`radio()` compose a `Cursor` for you; reach for `createCursor` directly when you want the imperative interface without a stream — e.g. driving a scan-progress UI where the user clicks "load more history" instead of an always-on `for await`.
 

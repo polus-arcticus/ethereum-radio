@@ -19,17 +19,29 @@ export const createViemAdapter = (client: PublicClient): LogsProvider => ({
 		return block.hash;
 	},
 	getLogs: async (params: GetLogsParams): Promise<RawLog[]> => {
-		const logs = await client.request({
-			method: 'eth_getLogs',
-			params: [
-				{
-					address: params.address as `0x${string}` | `0x${string}`[],
-					topics: params.topics as any,
-					fromBlock: numberToHex(params.fromBlock),
-					toBlock: numberToHex(params.toBlock),
-				},
-			],
-		});
+		// retryCount: 0 — viem's default transport silently retries a JSON-RPC
+		// "Internal error" (-32603) up to 3x with exponential backoff, which is
+		// exactly the error a too-large range or rpc-doctor's step-down probing
+		// gets back; that failure is deterministic (the same range will fail
+		// identically every time), so the retries just add latency. This
+		// mirrors viem's own wallet actions (sendTransaction, switchChain, ...),
+		// which pass the same override for calls where blind retry is wrong.
+		// Cursor's span-based resumability already covers "try again later" for
+		// a chunk that fails for a genuinely transient reason.
+		const logs = await client.request(
+			{
+				method: 'eth_getLogs',
+				params: [
+					{
+						address: params.address as `0x${string}` | `0x${string}`[],
+						topics: params.topics as any,
+						fromBlock: numberToHex(params.fromBlock),
+						toBlock: numberToHex(params.toBlock),
+					},
+				],
+			},
+			{retryCount: 0},
+		);
 		return logs.map((log: any) => {
 			const formatted = formatLog(log);
 			return {

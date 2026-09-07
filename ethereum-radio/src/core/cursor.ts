@@ -28,6 +28,18 @@ export interface CursorConfig {
 	/** A floor below which logs can't exist (e.g. contract deployment block). */
 	floorBlock: bigint;
 	blockRangeLimit: bigint;
+	/**
+	 * Optional multiplier (0–1] shrinking the actual scan window below
+	 * `blockRangeLimit` — a second, independent knob from
+	 * `safeBlockRangeLimit`'s one-block fencepost adjustment. Some RPCs cap
+	 * `eth_getLogs` by response size/log count rather than block width, so a
+	 * request that's in-range can still fail against a denser event than
+	 * whatever `detectRpcCapabilities` happened to probe with. If you expect
+	 * heavy log volume (e.g. every block full of USDC `Transfer` events),
+	 * set this to something like `0.5` to leave headroom against that.
+	 * Default: 1.0 (no padding).
+	 */
+	safetyPadding?: number;
 	/** Optional forward-scan anchor — enables fetchForward()/sync() extending from a known block. */
 	atBlock?: bigint;
 	/** Required for checkForReorg() — where recorded header hashes persist. Independent of `store`; a plain Store<Checkpoint[]> (e.g. createMemoryStore<Checkpoint[]>()). */
@@ -90,10 +102,19 @@ export const createCursor = (config: CursorConfig): Cursor => {
 		address,
 		topics,
 		floorBlock,
-		blockRangeLimit,
+		blockRangeLimit: configuredBlockRangeLimit,
+		safetyPadding,
 		atBlock,
 		checkpointStore,
 	} = config;
+
+	// Applied once, up front — every window-sizing call below (chunkedFetchLogs,
+	// span math, cellStates) reads this closed-over value rather than the raw
+	// config, so a caller anticipating dense logs only has to set one option.
+	const blockRangeLimit =
+		safetyPadding !== undefined
+			? BigInt(Math.max(1, Math.floor(Number(configuredBlockRangeLimit) * safetyPadding)))
+			: configuredBlockRangeLimit;
 
 	const loadSpans = async (): Promise<Span[]> => (await store.load(key)) ?? [];
 

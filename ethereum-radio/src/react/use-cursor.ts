@@ -15,6 +15,8 @@ export interface UseCursorArgs {
 	/** A floor below which logs can't exist (e.g. contract deployment block). */
 	floorBlock: bigint;
 	blockRangeLimit: bigint;
+	/** Optional multiplier (0–1] shrinking the scan window below blockRangeLimit — see CursorConfig. Default: 1.0 (no padding). */
+	safetyPadding?: number;
 	/** Optional forward-scan anchor — enables fetchForward() extending from a known block. */
 	atBlock?: bigint;
 	/** If set, re-runs the tip-tailing sync on this interval (ms). Default: no polling. */
@@ -49,6 +51,7 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 		address,
 		floorBlock,
 		blockRangeLimit,
+		safetyPadding,
 		atBlock,
 		pollIntervalMs,
 	} = args;
@@ -69,6 +72,7 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 				topics: args.topics,
 				floorBlock,
 				blockRangeLimit,
+				safetyPadding,
 				atBlock,
 				checkpointStore,
 			}),
@@ -81,6 +85,7 @@ export const useCursor = (args: UseCursorArgs): UseCursorResult => {
 			topicsKey,
 			floorBlock,
 			blockRangeLimit,
+			safetyPadding,
 			atBlock,
 			checkpointStore,
 		],

@@ -85,15 +85,14 @@ export async function detectRpcCapabilities(
 	return results;
 }
 
-const PHI = (1 + Math.sqrt(5)) / 2;
-
-// Applies a golden-ratio safety margin to a detected max block range, so the
-// derived blockRangeLimit stays comfortably under a boundary that may be
-// approximate (rate limits, response-size caps) rather than a hard cutoff.
-// maxBlockRange is always one of RANGE_CANDIDATES (at most 2,000,000), so
-// Number(...) is safe here — don't reuse this pattern for an arbitrary
-// chain-scale bigint elsewhere.
-export const safeBlockRangeLimit = (maxBlockRange: bigint): bigint => {
-	const safe = Math.floor(Number(maxBlockRange) * (1 / PHI + 1 / PHI ** 3));
-	return BigInt(Math.max(1, safe));
-};
+// maxBlockRange is the widest width that actually succeeded, so it's already
+// a safe width on its own — this only backs off one block, as a fencepost
+// guard against RPCs that define their own advertised/enforced cap as a
+// from/to *difference* rather than an inclusive block count (i.e. a cap some
+// providers would describe as "N blocks" but enforce as N+1). It does *not*
+// protect against a secondary cap keyed on response size/log count rather
+// than block width — a request in-range can still fail against a denser
+// event than whatever detectRpcCapabilities probed with. For that, use
+// CursorConfig's `safetyPadding` to shrink the scan window itself.
+export const safeBlockRangeLimit = (maxBlockRange: bigint): bigint =>
+	maxBlockRange > 1n ? maxBlockRange - 1n : 1n;

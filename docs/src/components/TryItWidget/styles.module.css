@@ -35,6 +35,17 @@
 	font-size: 0.85rem;
 }
 
+.warning {
+	color: var(--ifm-color-warning-darker);
+	font-weight: normal;
+	font-size: 0.85rem;
+}
+
+.field input:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
 .results {
 	margin-top: 2rem;
 	padding-top: 1rem;
@@ -100,4 +111,39 @@
 .reorgStatus {
 	font-size: 0.85rem;
 	color: var(--ifm-color-emphasis-700);
+}
+
+.rpcDoctor {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+	padding: 0.75rem;
+	border: 1px solid var(--ifm-color-emphasis-300);
+	border-radius: var(--ifm-global-radius);
+}
+
+.rpcDoctorErrors {
+	font-size: 0.8rem;
+	color: var(--ifm-color-emphasis-700);
+	margin: 0.35rem 0 0;
+}
+
+.radioControllerTrigger {
+	margin-bottom: 1rem;
+}
+
+.radioControllerPopover {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	max-width: 24rem;
+	padding: 1rem;
+	border: 1px solid var(--ifm-color-emphasis-300);
+	border-radius: var(--ifm-global-radius);
+	background: var(--ifm-background-color);
+	color: var(--ifm-font-color-base);
+}
+
+.radioControllerPopover::backdrop {
+	background: rgb(0 0 0 / 35%);
 }

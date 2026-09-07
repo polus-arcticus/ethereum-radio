@@ -25,8 +25,8 @@
 			"default": "./dist/sync/*.js"
 		},
 		"./react": {
-			"types": "./dist/react/use-cursor.d.ts",
-			"default": "./dist/react/use-cursor.js"
+			"types": "./dist/react/index.d.ts",
+			"default": "./dist/react/index.js"
 		},
 		"./src/*": "./src/*"
 	},
@@ -80,6 +80,7 @@
 		"build": "pnpm compile",
 		"test": "bash scripts/test-with-anvil.sh",
 		"test:only": "node --experimental-strip-types --test --test-concurrency=1 \"test/**/*.test.ts\" \"test/**/*.test.tsx\"",
+		"test:mainnet": "node --env-file=../contracts/.env --experimental-strip-types --test \"test/mainnet/**/*.test.ts\"",
 		"typecheck": "tsc --noEmit",
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."

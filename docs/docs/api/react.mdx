@@ -58,6 +58,63 @@ interface UseCursorResult {
 
 On mount (and whenever the cursor's identity changes — a different `key`/`address`/`topics`), the hook runs an initial tip-tailing `sync()` automatically. If `pollIntervalMs` is set, it repeats that sync on an interval — a simple, adapter-agnostic substitute for a live push subscription, since a real push subscription would need a watch-capable provider (which viem and ethers support differently), out of scope for this package's framework-agnostic core.
 
-`scanRange`/`fetchHistory`/`fetchForward` are the same operations as on a [`Cursor`](../api/core.mdx#cursor), wired to update `scannedSpans`/`isLoading`/`error` as they run. There's no equivalent of `createRadio`'s `for await` stream exposed here — this hook is for driving the cursor imperatively from component code (a "load more history" button, a scan-progress grid from `cellStates`); reach for `createRadio` directly (e.g. inside a `useEffect`) if you want the push-style stream inside a component instead.
+`scanRange`/`fetchHistory`/`fetchForward` are the same operations as on a [`Cursor`](../api/core.mdx#cursor), wired to update `scannedSpans`/`isLoading`/`error` as they run. This hook is for driving the cursor imperatively from component code (a "load more history" button, a scan-progress grid from `cellStates`) — reach for [`useRadioController`](#useradiocontroller) below if you want `createRadio`'s push-style stream inside a component instead, with pause/resume/cancel built in.
 
 `checkForReorg` is the same operation as [`Cursor.checkForReorg`](../api/core.mdx#checkforreorg) — wired the same way, resolving to `undefined` (with `error` set) rather than throwing if `checkpointStore` wasn't provided or the provider lacks `getBlockHash`. This is the one to wire a scan-map grid's "check for reorgs" button to.
+
+## `useRadioController`
+
+```ts
+import {useRadioController} from '@ethereum-radio/indexer/react';
+
+function useRadioController(args: UseRadioControllerArgs): UseRadioControllerResult;
+```
+
+A React binding over [`radio()`](../api/core.mdx#radio)'s streaming replay, adding the controls a long-running scan against a dense contract actually needs: pause and resume without losing progress, cancel, and an "is this stuck?" status — the pattern behind the Try It page's scan-status popover. It starts scanning automatically on mount, same as `useCursor`.
+
+Pause and resume need no special support from `radio()` itself. [`Cursor`](../api/core.mdx#cursor) is already designed to be fully re-derivable from `store` — every method re-reads `store.load(key)` fresh rather than trusting in-memory state — so "pause" is just aborting the current `radio()` call, and "resume" is starting a fresh one against the *same* `store`/`checkpointStore` you passed in, which naturally continues wherever the aborted one left off. This is also why `useRadioController`, like `useCursor`, never constructs its own storage: pass stable `store`/`checkpointStore` instances (e.g. from a `useMemo`) if you want pause/resume to actually preserve progress.
+
+### `UseRadioControllerArgs`
+
+```ts
+interface UseRadioControllerArgs extends CursorConfig {
+	/** Delay between live-tail sync() polls once history is fully replayed. Default: 4000ms. */
+	pollIntervalMs?: number;
+	/** See RadioOptions.yieldEveryMs. Default: 50ms. */
+	yieldEveryMs?: number;
+	/** No new chunk, and not yet caught up, for this long -> isTakingAWhile flips true. Default: 15,000ms. */
+	takingAWhileMs?: number;
+	/** Caps how many RawLog entries `logs` holds — totalFound still counts everything found. Default: 200. */
+	logCap?: number;
+	/** How often status/isTakingAWhile/caught-up are recomputed. Default: 1000ms. */
+	statusPollMs?: number;
+}
+```
+
+Same shape as [`CursorConfig`](../api/core.mdx#createcursor) (so `safetyPadding` works here too), plus the streaming/status options above.
+
+### `UseRadioControllerResult`
+
+```ts
+type RadioControllerStatus =
+	| 'idle' | 'scanning' | 'paused' | 'caught-up' | 'cancelled' | 'error';
+
+interface UseRadioControllerResult {
+	status: RadioControllerStatus;
+	logs: RawLog[];
+	totalFound: number;
+	isTakingAWhile: boolean;
+	elapsedMs: number;
+	error: Error | undefined;
+	pause: () => void;
+	resume: () => void;
+	cancel: () => void;
+	/** The underlying Cursor — for getCellStates()/checkForReorg()/isFullyScanned(); this hook doesn't duplicate that surface. */
+	cursor: Cursor;
+}
+```
+
+- **`logs`/`totalFound`** — `logs` holds at most `logCap` entries (newest first); `totalFound` keeps counting everything found even past that cap. Chunks buffer internally and flush to state at most once per `statusPollMs` — a scan yielding much faster than that doesn't trigger a re-render per chunk.
+- **`status`** — `'paused'`/`'cancelled'` only ever come from calling `pause()`/`cancel()`; everything else reflects the underlying scan. `cancel()` is terminal in this version — `resume()` after it is a no-op.
+- **`isTakingAWhile`** — true once `takingAWhileMs` has passed with no new chunk and the scan isn't caught up yet. Purely informational (this hook doesn't act on it) — pair it with a "this is taking a while, consider pausing" message and your own Pause button.
+- **`cursor`** — the same `Cursor` this hook streams from, for anything outside the stream/control surface: `getCellStates()` for a scan-progress grid, `checkForReorg()`, `isFullyScanned()`, `scanRange()` for manual control.

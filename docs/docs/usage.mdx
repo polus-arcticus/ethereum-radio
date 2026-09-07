@@ -10,22 +10,24 @@ This walks through indexing one event filter end to end: pick an adapter, pick a
 
 An adapter wraps a client/provider you already constructed — this package never creates its own. Pick the subpath matching whichever library you use; both normalize to the same [`LogsProvider`](./api/core.mdx#logsprovider) shape.
 
+`ethereum-radio` is designed browser-first — the example below routes through the connected wallet's own RPC via `custom(window.ethereum)` rather than a hardcoded endpoint. Looking for a node-based runner instead? Consider [wighawag/etherfold](https://github.com/wighawag/etherfold).
+
 ```ts
-import {createPublicClient, http} from 'viem';
+import {createPublicClient, custom} from 'viem';
 import {mainnet} from 'viem/chains';
 import {createViemAdapter} from '@ethereum-radio/indexer/adapters/viem';
 
-const publicClient = createPublicClient({chain: mainnet, transport: http()});
+const publicClient = createPublicClient({chain: mainnet, transport: custom(window.ethereum!)});
 const provider = createViemAdapter(publicClient);
 ```
 
 or with ethers:
 
 ```ts
-import {JsonRpcProvider} from 'ethers';
+import {BrowserProvider} from 'ethers';
 import {createEthersAdapter} from '@ethereum-radio/indexer/adapters/ethers';
 
-const ethersProvider = new JsonRpcProvider('https://your-rpc-url');
+const ethersProvider = new BrowserProvider(window.ethereum);
 const provider = createEthersAdapter(ethersProvider);
 ```
 
@@ -46,7 +48,9 @@ const blockRangeLimit = maxBlockRange
 	: 2_000n; // fallback if every candidate width failed
 ```
 
-`safeBlockRangeLimit` applies a safety margin below the detected max, since the true limit may be approximate rather than a hard cutoff. If you already know a safe value for your RPC (your own node, or a provider's documented limit), skip the probe and just set the constant directly instead: `const blockRangeLimit = 2_000n;`.
+`safeBlockRangeLimit` backs the detected max off by one block, as a fencepost guard against RPCs that enforce their range cap as a from/to difference rather than an inclusive block count. It doesn't protect against a secondary cap keyed on response size or log count — if you're indexing a contract you expect to be log-dense (e.g. USDC `Transfer`), pass [`CursorConfig`](./api/core.mdx#createcursor)'s `safetyPadding` (e.g. `0.5`) to shrink the actual scan window below `blockRangeLimit` and leave headroom for that.
+
+If you already know a safe value for your RPC (your own node, or a provider's documented limit), skip the probe and just set the constant directly instead: `const blockRangeLimit = 2_000n;`.
 
 Either way, compute it once and reference the `blockRangeLimit` binding everywhere below — every snippet on this page uses that same name rather than repeating a literal.
 
@@ -78,6 +82,7 @@ const radio = createRadio({
 	address: '0xYourContractAddress',
 	floorBlock: 18_000_000n, // e.g. the contract's deployment block
 	blockRangeLimit, // from step 2
+	safetyPadding: 1.0, // optional, default 1.0 (no padding) — see below
 });
 
 for await (const logs of radio) {
@@ -86,6 +91,8 @@ for await (const logs of radio) {
 	}
 }
 ```
+
+`safetyPadding` shrinks `blockRangeLimit` by that ratio for the actual scan window — leave it at the default `1.0` unless you're indexing a contract you expect to be unusually log-dense (e.g. USDC `Transfer`), where a request that's within `blockRangeLimit` can still trip a response-size/log-count cap `detectRpcCapabilities` never saw during its own (comparatively sparse) probe. `0.5` there means every scan window is half of `blockRangeLimit`.
 
 `createRadio` replays history in `blockRangeLimit`-sized chunks first — oldest scanned window last, since it walks backward from the tip — then switches to polling the tip forever once `floorBlock` is reached, yielding only when a chunk actually contains matching logs. `break`ing the loop (or aborting an `AbortSignal` passed as `{signal}` in the second argument) stops it cleanly; there's no separate subscribe/unsubscribe call to remember.
 
