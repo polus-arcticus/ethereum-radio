@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 220" role="img" aria-label="One client exporting a scan snapshot to IPFS, a new client importing it instead of re-scanning">
+	<style>
+		.er-packet {
+			offset-path: path('M 210 110 L 550 110');
+			animation: er-travel 3.2s ease-in-out infinite;
+		}
+		@keyframes er-travel {
+			0% { offset-distance: 0%; opacity: 0; }
+			8% { opacity: 1; }
+			92% { opacity: 1; }
+			100% { offset-distance: 100%; opacity: 0; }
+		}
+		.er-client-b-bar {
+			animation: er-receive 3.2s ease-in-out infinite;
+			opacity: 0.15;
+		}
+		@keyframes er-receive {
+			0%, 78% { opacity: 0.15; }
+			94%, 100% { opacity: 1; }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			.er-packet { animation: none; opacity: 0; }
+			.er-client-b-bar { animation: none; opacity: 1; }
+		}
+	</style>
+
+	<g stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6 6" fill="none">
+		<line x1="210" y1="110" x2="330" y2="110"/>
+		<line x1="430" y1="110" x2="550" y2="110"/>
+	</g>
+
+	<circle class="er-packet" cx="0" cy="0" r="7" fill="#22d3ee"/>
+
+	<g transform="translate(380,110)">
+		<polygon points="-14,-32 14,-32 28,0 14,32 -14,32 -28,0" fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
+	</g>
+	<text x="380" y="176" text-anchor="middle" fill="#a5b4fc" font-family="monospace" font-size="13">CID</text>
+
+	<g transform="translate(60,55)">
+		<rect width="150" height="110" rx="12" fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
+		<rect x="16" y="20" width="118" height="16" rx="4" fill="#6366f1"/>
+		<g stroke="#4338ca" stroke-width="3" stroke-linecap="round">
+			<line x1="16" y1="56" x2="100" y2="56"/>
+			<line x1="16" y1="72" x2="120" y2="72"/>
+			<line x1="16" y1="88" x2="80" y2="88"/>
+		</g>
+	</g>
+	<text x="135" y="192" text-anchor="middle" fill="#a5b4fc" font-family="monospace" font-size="13">client A</text>
+
+	<g transform="translate(550,55)">
+		<rect width="150" height="110" rx="12" fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
+		<rect class="er-client-b-bar" x="16" y="20" width="118" height="16" rx="4" fill="#6366f1"/>
+		<g stroke="#4338ca" stroke-width="3" stroke-linecap="round" opacity="0.5">
+			<line x1="16" y1="56" x2="100" y2="56"/>
+			<line x1="16" y1="72" x2="120" y2="72"/>
+		</g>
+	</g>
+	<text x="625" y="192" text-anchor="middle" fill="#a5b4fc" font-family="monospace" font-size="13">client B (new)</text>
+</svg>
