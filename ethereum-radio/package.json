@@ -1,6 +1,29 @@
 {
 	"name": "@ethereum-radio/indexer",
-	"version": "0.0.1",
+	"version": "0.0.3",
+	"description": "Browser-side event-log indexing for dapps — a resumable, incremental eth_getLogs cursor with viem/ethers adapters, pluggable storage, and IPFS export/import.",
+	"keywords": [
+		"ethereum",
+		"evm",
+		"web3",
+		"dapp",
+		"indexer",
+		"indexing",
+		"event-logs",
+		"eth_getLogs",
+		"viem",
+		"ethers",
+		"browser"
+	],
+	"homepage": "https://polus-arcticus.github.io/ethereum-radio/",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/polus-arcticus/ethereum-radio.git",
+		"directory": "ethereum-radio"
+	},
+	"bugs": {
+		"url": "https://github.com/polus-arcticus/ethereum-radio/issues"
+	},
 	"license": "Unlicense",
 	"private": false,
 	"publishConfig": {
